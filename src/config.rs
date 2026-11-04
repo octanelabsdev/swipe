@@ -1,0 +1,177 @@
+use anyhow::{Context, Result, bail};
+use serde::Deserialize;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::{env, fs};
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawConfig {
+    default: Option<String>,
+    profiles: BTreeMap<String, RawProfile>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawProfile {
+    config_dir: String,
+    #[serde(default)]
+    paths: Vec<String>,
+}
+
+pub struct Profile {
+    pub name: String,
+    /// As configured, with `~` expanded and any trailing separator dropped. Not resolved further,
+    /// because Claude Code keys its macOS login to this exact value.
+    pub config_dir: PathBuf,
+    paths: Vec<PathBuf>,
+}
+
+pub struct Config {
+    /// The source tree: `profiles.json`, `shared/` and `profiles/<name>/`.
+    pub home: PathBuf,
+    pub profiles: Vec<Profile>,
+    default: Option<String>,
+    user_home: PathBuf,
+}
+
+impl Config {
+    pub fn load() -> Result<Config> {
+        let user_home = env::home_dir().context("could not determine your home directory")?;
+        let home = match env::var_os("CPROF_HOME") {
+            Some(dir) => PathBuf::from(dir),
+            None => env::var_os("XDG_CONFIG_HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| user_home.join(".config"))
+                .join("claude-profiles"),
+        };
+        let home = std::path::absolute(home)?;
+        let file = home.join("profiles.json");
+        let text = fs::read_to_string(&file)
+            .with_context(|| format!("could not read {}", file.display()))?;
+        let raw: RawConfig =
+            serde_json::from_str(&text).with_context(|| format!("invalid {}", file.display()))?;
+        Config::from_raw(raw, home, user_home)
+            .with_context(|| format!("invalid {}", file.display()))
+    }
+
+    fn from_raw(raw: RawConfig, home: PathBuf, user_home: PathBuf) -> Result<Config> {
+        let mut profiles: Vec<Profile> = Vec::new();
+        for (name, p) in raw.profiles {
+            let config_dir = expand(&p.config_dir, &user_home)
+                .with_context(|| format!("profile \"{name}\": config_dir"))?;
+            if let Some(other) = profiles
+                .iter()
+                .find(|o| same_path(&o.config_dir, &config_dir))
+            {
+                bail!(
+                    "profiles \"{}\" and \"{name}\" share the config_dir {}",
+                    other.name,
+                    config_dir.display()
+                );
+            }
+            let paths: Vec<PathBuf> = p
+                .paths
+                .iter()
+                .map(|path| expand(path, &user_home))
+                .collect::<Result<_>>()
+                .with_context(|| format!("profile \"{name}\": paths"))?;
+            for path in &paths {
+                if let Some(other) = profiles
+                    .iter()
+                    .find(|o| o.paths.iter().any(|q| same_path(q, path)))
+                {
+                    bail!(
+                        "profiles \"{}\" and \"{name}\" both list the path {}",
+                        other.name,
+                        path.display()
+                    );
+                }
+            }
+            profiles.push(Profile {
+                name,
+                config_dir,
+                paths,
+            });
+        }
+        if let Some(default) = &raw.default
+            && !profiles.iter().any(|p| &p.name == default)
+        {
+            bail!("default profile \"{default}\" is not defined");
+        }
+        Ok(Config {
+            home,
+            profiles,
+            default: raw.default,
+            user_home,
+        })
+    }
+
+    /// The profile whose most specific path contains `dir`, else the default.
+    pub fn profile_for(&self, dir: &Path) -> Result<&Profile> {
+        let dir = fs::canonicalize(dir)
+            .with_context(|| format!("no such directory: {}", dir.display()))?;
+        let mut best: Option<(&Profile, usize)> = None;
+        for profile in &self.profiles {
+            for path in &profile.paths {
+                // A path that doesn't exist (or can't be read) can't contain the working directory.
+                let Ok(path) = fs::canonicalize(path) else {
+                    continue;
+                };
+                let depth = path.components().count();
+                if dir.starts_with(&path) && best.is_none_or(|(_, d)| depth > d) {
+                    best = Some((profile, depth));
+                }
+            }
+        }
+        if let Some((profile, _)) = best {
+            return Ok(profile);
+        }
+        match &self.default {
+            Some(name) => Ok(self
+                .profiles
+                .iter()
+                .find(|p| &p.name == name)
+                .expect("validated on load")),
+            None => bail!(
+                "no profile's paths contain {} and no \"default\" is set",
+                dir.display()
+            ),
+        }
+    }
+
+    /// Claude Code's own default. Running with this dir means leaving CLAUDE_CONFIG_DIR unset,
+    /// because setting it explicitly would point at a different (logged-out) account.
+    pub fn is_default_dir(&self, dir: &Path) -> bool {
+        same_path(dir, &self.user_home.join(".claude"))
+    }
+}
+
+fn expand(path: &str, user_home: &Path) -> Result<PathBuf> {
+    let expanded = if path == "~" {
+        user_home.to_path_buf()
+    } else if let Some(rest) = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")) {
+        user_home.join(rest)
+    } else {
+        PathBuf::from(path)
+    };
+    if !expanded.is_absolute() {
+        bail!("\"{path}\" must be an absolute path or start with ~");
+    }
+    // Rebuilding from components drops a trailing separator but keeps a root like `/` or `C:\`.
+    Ok(expanded.components().collect())
+}
+
+/// macOS and Windows file systems ignore letter case by default.
+pub const IGNORES_CASE: bool = cfg!(any(windows, target_os = "macos"));
+
+/// Compares component by component, so `/` and `\` are equivalent on Windows.
+fn same_path(a: &Path, b: &Path) -> bool {
+    let parts = |p: &Path| -> Vec<String> {
+        p.components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .map(|s| if IGNORES_CASE { s.to_lowercase() } else { s })
+            .collect()
+    };
+    parts(a) == parts(b)
+}
