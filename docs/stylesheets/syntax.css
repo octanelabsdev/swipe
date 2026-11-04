@@ -1,0 +1,143 @@
+/*
+ * harness docs theme — Syntax-inspired foundation + our own flair.
+ *
+ * Foundation (tokens from the Tailwind "Syntax" template's compiled CSS):
+ *   fonts   Lexend (display) + Inter (body)
+ *   accent  #00bcfe (sky) / #77d4ff (light sky)
+ *   dark    bg #0f172b · deepest #0A101F · panel #1d293d · border #314158 · text #cad5e2
+ * Our flair:
+ *   a sky -> indigo brand gradient on headings, the active-nav bar, and hover;
+ *   JetBrains Mono code; lifting card grid; a signature gradient hairline on the header.
+ */
+@import url('https://fonts.googleapis.com/css2?family=Lexend:wght@400;500;600;700&display=swap');
+
+:root {
+  --sx-sky: #00bcfe;
+  --sx-sky-light: #77d4ff;
+  --sx-sky-ink: #0284c7;      /* readable sky link on white */
+  --sx-indigo: #6366f1;
+  --sx-grad: linear-gradient(115deg, #00bcfe 0%, #6366f1 100%);
+
+  --sx-slate-950: #0A101F;
+  --sx-slate-900: #0f172b;
+  --sx-slate-800: #1d293d;
+  --sx-slate-700: #314158;
+  --sx-slate-300: #cad5e2;
+  --sx-slate-400: #90a1b9;
+  --sx-slate-500: #62748e;
+
+  --md-accent-fg-color: var(--sx-sky);
+}
+
+/* ---- Display type ---- */
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3,
+.md-typeset h4,
+.md-header__topic,
+.md-nav__title,
+.md-ellipsis {
+  font-family: "Lexend", "Inter", system-ui, sans-serif;
+  letter-spacing: -0.015em;
+}
+.md-typeset h2,
+.md-typeset h3 { font-weight: 600; }
+
+/* Flair: gradient page title. */
+.md-typeset h1 {
+  font-weight: 700;
+  background: var(--sx-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* ---- Links ---- */
+.md-typeset a { color: var(--sx-sky-ink); text-decoration-color: color-mix(in srgb, var(--sx-sky) 45%, transparent); }
+.md-typeset a:hover { color: var(--sx-sky); }
+
+/* ---- Signature gradient hairline under the header ---- */
+.md-header {
+  border-bottom: 1px solid var(--md-default-fg-color--lightest);
+}
+.md-header::after {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 2px;
+  background: var(--sx-grad);
+  opacity: 0.9;
+}
+
+/* ---- Active sidebar item: gradient accent bar ---- */
+.md-nav__link--active {
+  color: var(--sx-sky-ink);
+  font-weight: 600;
+  position: relative;
+}
+.md-nav__link--active::before {
+  content: "";
+  position: absolute;
+  left: -0.75rem;
+  top: 0.15em;
+  bottom: 0.15em;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--sx-grad);
+}
+.md-nav__link:hover { color: var(--sx-sky); }
+
+/* ---- Code ---- */
+.md-typeset pre > code,
+.md-typeset .highlight,
+.md-typeset pre { border-radius: 10px; }
+.md-search__form { border-radius: 10px; }
+
+/* ---- Flair: lifting card grid (used on the home page) ---- */
+.md-typeset .grid.cards > ul > li,
+.md-typeset .grid.cards > :is(ul,ol) > li,
+.md-typeset .grid > .card {
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 14px;
+  padding: 1rem 1.1rem;
+  transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease;
+}
+.md-typeset .grid.cards > ul > li:hover,
+.md-typeset .grid > .card:hover {
+  transform: translateY(-3px);
+  border-color: color-mix(in srgb, var(--sx-sky) 55%, transparent);
+  box-shadow: 0 10px 30px -12px color-mix(in srgb, var(--sx-indigo) 45%, transparent);
+}
+
+/* Admonitions tie into the brand. */
+.md-typeset .admonition.note,
+.md-typeset .admonition.tip { border-left-color: var(--sx-sky); }
+
+/* ---- Dark mode: Syntax slate palette ---- */
+[data-md-color-scheme="slate"] {
+  --md-default-bg-color: var(--sx-slate-900);
+  --md-default-fg-color: var(--sx-slate-300);
+  --md-default-fg-color--light: var(--sx-slate-400);
+  --md-default-fg-color--lighter: var(--sx-slate-500);
+  --md-default-fg-color--lightest: #263248;
+
+  --md-typeset-color: var(--sx-slate-300);
+  --md-typeset-a-color: var(--sx-sky-light);
+
+  --md-code-bg-color: var(--sx-slate-950);
+  --md-code-fg-color: #e2e8f5;
+
+  --md-accent-fg-color: var(--sx-sky-light);
+  --md-primary-fg-color: var(--sx-slate-950);
+}
+
+[data-md-color-scheme="slate"] .md-typeset a { color: var(--sx-sky-light); }
+[data-md-color-scheme="slate"] .md-typeset a:hover { color: var(--sx-sky); }
+[data-md-color-scheme="slate"] .md-nav__link--active { color: var(--sx-sky-light); }
+
+[data-md-color-scheme="slate"] .md-typeset pre,
+[data-md-color-scheme="slate"] .md-typeset .highlight,
+[data-md-color-scheme="slate"] .md-typeset table:not([class]) {
+  border: 1px solid var(--sx-slate-700);
+}
+[data-md-color-scheme="slate"] .md-header { border-bottom-color: var(--sx-slate-800); }

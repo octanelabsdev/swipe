@@ -3,6 +3,17 @@ name = "swipe"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
+description = "Run Claude Code with the right account for every directory"
+license = "MIT"
+repository = "https://github.com/octanelabsdev/swipe"
+homepage = "https://swipe.octanelabs.dev"
+readme = "README.md"
+keywords = ["claude", "claude-code", "cli", "profiles", "accounts"]
+categories = ["command-line-utilities", "development-tools"]
+
+[profile.release]
+strip = true
+lto = true
 
 [dependencies]
 anyhow = "1.0.104"

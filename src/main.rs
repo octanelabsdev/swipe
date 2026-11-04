@@ -17,7 +17,8 @@ usage: swipe run [args...]        run claude with the profile for the current di
        swipe import <profile>     copy a profile's existing commands, hooks and settings
                                   into the source tree, then sync them back
        swipe init <shell>         print the hook that makes `claude` run through swipe
-                                  (bash, zsh or powershell)";
+                                  (bash, zsh or powershell)
+       swipe --version            print the version";
 
 const POSIX_HOOK: &str =
     "unalias claude 2>/dev/null || true\nfunction claude { command swipe run \"$@\"; }\n";
@@ -79,6 +80,10 @@ fn run_command(args: Vec<OsString>) -> Result<ExitCode> {
                 Some("powershell" | "pwsh") => print!("{POWERSHELL_HOOK}"),
                 _ => return usage_error(),
             }
+            Ok(ExitCode::SUCCESS)
+        }
+        Some("version" | "-V" | "--version") => {
+            println!("swipe {}", env!("CARGO_PKG_VERSION"));
             Ok(ExitCode::SUCCESS)
         }
         Some("help" | "-h" | "--help") => {

@@ -1630,3 +1630,14 @@ fn import_reports_what_an_interrupted_sync_set_aside() {
         "original"
     );
 }
+
+#[test]
+fn version_prints_the_package_version() {
+    let s = Sandbox::new();
+    let out = s.run(&["--version"]);
+    assert_ok(&out);
+    assert_eq!(
+        stdout(&out),
+        format!("swipe {}\n", env!("CARGO_PKG_VERSION"))
+    );
+}
