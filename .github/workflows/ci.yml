@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     strategy:
@@ -14,9 +17,17 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           components: clippy, rustfmt
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+      - name: install.ps1 parses in PowerShell 5.1 and 7
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          foreach ($shell in 'powershell', 'pwsh') {
+            & $shell -NoProfile -Command '$errors = $null; [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path install.ps1), [ref]$null, [ref]$errors) | Out-Null; if ($errors) { $errors; exit 1 }'
+            if ($LASTEXITCODE) { throw "install.ps1 does not parse in $shell" }
+          }

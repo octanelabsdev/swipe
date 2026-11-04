@@ -1,0 +1,116 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: The tag matches Cargo.toml
+        run: |
+          version="$(grep -m1 '^version' Cargo.toml | cut -d '"' -f 2)"
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME but Cargo.toml says $version"; exit 1; }
+
+  build:
+    needs: check-version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-latest }
+          - { target: aarch64-unknown-linux-musl, os: ubuntu-24.04-arm }
+          - { target: x86_64-apple-darwin, os: macos-latest }
+          - { target: aarch64-apple-darwin, os: macos-latest }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          targets: ${{ matrix.target }}
+      - if: contains(matrix.target, 'musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Package
+        if: runner.os != 'Windows'
+        run: |
+          name="swipe-${{ matrix.target }}.tar.gz"
+          mkdir dist
+          cp "target/${{ matrix.target }}/release/swipe" LICENSE README.md dist/
+          tar -czf "$name" -C dist swipe LICENSE README.md
+          shasum -a 256 "$name" > "$name.sha256"
+      - name: Package
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $name = "swipe-${{ matrix.target }}.zip"
+          New-Item -ItemType Directory dist | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/swipe.exe", LICENSE, README.md dist/
+          Compress-Archive -Path dist/* -DestinationPath $name
+          $hash = (Get-FileHash $name -Algorithm SHA256).Hash.ToLower()
+          Set-Content -Path "$name.sha256" -Value "$hash  $name" -NoNewline -Encoding ascii
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: swipe-*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      # A tag like v0.2.0-rc.1 is a pre-release, so the installers' "latest" never picks it.
+      - run: |
+          prerelease=""
+          case "$GITHUB_REF_NAME" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes $prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  # Installs the new release as a user would; if that fails, the release goes back to a draft.
+  install:
+    needs: release
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - if: runner.os != 'Windows'
+        run: |
+          SWIPE_VERSION="$GITHUB_REF_NAME" sh install.sh
+          test "$("$HOME/.local/bin/swipe" --version)" = "swipe ${GITHUB_REF_NAME#v}"
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:SWIPE_VERSION = $env:GITHUB_REF_NAME
+          ./install.ps1
+          $installed = & "$env:LOCALAPPDATA\Programs\swipe\swipe.exe" --version
+          if ($installed -ne "swipe $($env:GITHUB_REF_NAME.TrimStart('v'))") { throw "installed $installed" }
+      # Windows PowerShell 5.1, over the install above, as a new user updating would.
+      - if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $env:SWIPE_VERSION = $env:GITHUB_REF_NAME
+          ./install.ps1
+          $installed = & "$env:LOCALAPPDATA\Programs\swipe\swipe.exe" --version
+          if ($installed -ne "swipe $($env:GITHUB_REF_NAME.TrimStart('v'))") { throw "installed $installed" }
+      - if: failure()
+        run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
