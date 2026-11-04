@@ -111,7 +111,6 @@ impl Config {
     pub fn profile_for(&self, dir: &Path) -> Result<&Profile> {
         let dir = fs::canonicalize(dir)
             .with_context(|| format!("no such directory: {}", dir.display()))?;
-        // Every profile with a path containing `dir`, and how deep that path is.
         let mut matches: Vec<(&Profile, usize)> = Vec::new();
         for profile in &self.profiles {
             for path in &profile.paths {

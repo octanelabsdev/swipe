@@ -336,7 +336,7 @@ fn with_fake_claude(s: &Sandbox, cmd: &mut Command) {
     if cfg!(windows) {
         fs::write(
             bin.join("claude.cmd"),
-            "@echo CLAUDE_CONFIG_DIR=%CLAUDE_CONFIG_DIR% args=%*\r\n",
+            "@if defined CLAUDE_CONFIG_DIR (echo CLAUDE_CONFIG_DIR=%CLAUDE_CONFIG_DIR% args=%*) else (echo CLAUDE_CONFIG_DIR=^<unset^> args=%*)\r\n",
         )
         .unwrap();
     } else {
@@ -363,14 +363,6 @@ fn with_fake_claude(s: &Sandbox, cmd: &mut Command) {
     cmd.env("PATH", path).env("CLAUDE_CONFIG_DIR", "/stale");
 }
 
-fn unset() -> &'static str {
-    if cfg!(windows) {
-        "" // cmd expands an unset variable to nothing inside a batch file
-    } else {
-        "<unset>"
-    }
-}
-
 #[test]
 fn run_sets_the_config_dir_and_forwards_arguments() {
     let s = Sandbox::new();
@@ -394,10 +386,7 @@ fn run_unsets_the_config_dir_for_the_default_claude_dir() {
     cmd.current_dir(s.home.join("elsewhere"));
     with_fake_claude(&s, &mut cmd);
     let out = cmd.output().unwrap();
-    assert_eq!(
-        stdout(&out).trim(),
-        format!("CLAUDE_CONFIG_DIR={} args=-p hi", unset())
-    );
+    assert_eq!(stdout(&out).trim(), "CLAUDE_CONFIG_DIR=<unset> args=-p hi");
 }
 
 #[test]
@@ -434,10 +423,7 @@ fn run_treats_forward_slashes_as_the_default_dir_on_windows() {
     cmd.current_dir(s.home.join("elsewhere"));
     with_fake_claude(&s, &mut cmd);
     let out = cmd.output().unwrap();
-    assert_eq!(
-        stdout(&out).trim(),
-        format!("CLAUDE_CONFIG_DIR={} args=", unset())
-    );
+    assert_eq!(stdout(&out).trim(), "CLAUDE_CONFIG_DIR=<unset> args=");
 }
 
 #[test]
@@ -727,7 +713,12 @@ fn a_blocked_file_does_not_stop_the_rest_of_the_profile() {
     let out = s.sync();
     assert_fails(
         &out,
-        &s.home.join(".claude/commands/a.md").display().to_string(),
+        &s.home
+            .join(".claude")
+            .join("commands")
+            .join("a.md")
+            .display()
+            .to_string(),
     );
     assert_eq!(s.read(".claude/z.md"), "z");
     assert_eq!(s.read(".claude-work/commands/a.md"), "a");
@@ -1145,4 +1136,472 @@ fn copies_follow_later_permission_changes_but_stay_writable() {
         "b",
         "a read-only source still leaves an updatable copy"
     );
+}
+
+// --- import ------------------------------------------------------------------
+
+fn work_dir(s: &Sandbox) -> PathBuf {
+    let work = s.home.join(".claude-work");
+    fs::create_dir_all(&work).unwrap();
+    work
+}
+
+#[test]
+fn import_copies_what_you_wrote_and_links_it_back() {
+    let s = Sandbox::new();
+    let work = work_dir(&s);
+    fs::create_dir_all(work.join("commands")).unwrap();
+    fs::create_dir_all(work.join("projects/some-project")).unwrap();
+    fs::write(work.join("CLAUDE.md"), "rules").unwrap();
+    fs::write(work.join("commands/review.md"), "review").unwrap();
+    fs::write(work.join("settings.json"), r#"{"model": "x"}"#).unwrap();
+    fs::write(work.join("history.jsonl"), "history").unwrap();
+    fs::write(work.join(".credentials.json"), "secret").unwrap();
+
+    let out = s.run(&["import", "work"]);
+    assert_ok(&out);
+    assert_eq!(
+        stdout(&out).matches("work (").count(),
+        1,
+        "{}",
+        stdout(&out)
+    );
+
+    assert_eq!(
+        fs::read_to_string(s.src.join("profiles/work/CLAUDE.md")).unwrap(),
+        "rules"
+    );
+    assert!(
+        fs::symlink_metadata(work.join("CLAUDE.md"))
+            .unwrap()
+            .is_symlink()
+    );
+    assert!(
+        fs::symlink_metadata(work.join("commands/review.md"))
+            .unwrap()
+            .is_symlink()
+    );
+    assert_eq!(s.read(".claude-work/commands/review.md"), "review");
+    let settings: serde_json::Value =
+        serde_json::from_str(&s.read(".claude-work/settings.json")).unwrap();
+    assert_eq!(settings, serde_json::json!({"model": "x"}));
+    assert_eq!(s.read(".claude-work/history.jsonl"), "history");
+    assert_eq!(s.read(".claude-work/.credentials.json"), "secret");
+    assert!(work.join("projects/some-project").is_dir());
+    assert!(!s.src.join("profiles/work/history.jsonl").exists());
+    assert!(!s.src.join("profiles/work/.credentials.json").exists());
+    let again = s.sync();
+    assert_ok(&again);
+    assert!(!stdout(&again).contains("  "), "{}", stdout(&again));
+}
+
+#[test]
+fn import_changes_nothing_if_any_destination_exists() {
+    let s = Sandbox::new();
+    let work = work_dir(&s);
+    fs::write(work.join("CLAUDE.md"), "rules").unwrap();
+    s.write("profiles/work/CLAUDE.md", "already here");
+    assert_fails(&s.run(&["import", "work"]), "nothing was imported");
+    assert_eq!(s.read(".claude-work/CLAUDE.md"), "rules");
+    assert!(!work.join(".cprof-manifest.json").exists());
+}
+
+#[test]
+fn import_changes_nothing_when_settings_are_invalid() {
+    let s = Sandbox::new();
+    let work = work_dir(&s);
+    fs::write(work.join("CLAUDE.md"), "rules").unwrap();
+    fs::write(work.join("settings.json"), r#"{"model": "x",}"#).unwrap();
+    assert_fails(&s.run(&["import", "work"]), "is not valid JSON");
+    assert_eq!(s.read(".claude-work/settings.json"), r#"{"model": "x",}"#);
+    assert!(!s.src.join("profiles/work").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn import_changes_nothing_when_a_link_is_broken() {
+    let s = Sandbox::new();
+    let work = work_dir(&s);
+    fs::create_dir_all(work.join("commands")).unwrap();
+    fs::write(work.join("CLAUDE.md"), "rules").unwrap();
+    std::os::unix::fs::symlink("/nonexistent", work.join("commands/gone.md")).unwrap();
+    assert_fails(&s.run(&["import", "work"]), "nothing was imported");
+    assert_eq!(s.read(".claude-work/CLAUDE.md"), "rules");
+    assert!(!s.src.join("profiles/work").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_failed_copy_changes_nothing_and_can_be_retried() {
+    use std::os::unix::fs::PermissionsExt;
+    let s = Sandbox::new();
+    let work = work_dir(&s);
+    fs::write(work.join("CLAUDE.md"), "rules").unwrap();
+    fs::create_dir_all(s.src.join("profiles")).unwrap();
+    fs::set_permissions(s.src.join("profiles"), fs::Permissions::from_mode(0o555)).unwrap();
+    let failed = s.run(&["import", "work"]);
+    fs::set_permissions(s.src.join("profiles"), fs::Permissions::from_mode(0o755)).unwrap();
+    assert_fails(&failed, "nothing was imported");
+    assert_eq!(s.read(".claude-work/CLAUDE.md"), "rules");
+    assert!(!work.join(".cprof-manifest.json").exists());
+
+    assert_ok(&s.run(&["import", "work"]));
+    assert_eq!(s.read(".claude-work/CLAUDE.md"), "rules");
+}
+
+#[test]
+fn a_failing_sync_after_import_leaves_every_original_in_place() {
+    let s = Sandbox::new();
+    let work = work_dir(&s);
+    fs::write(work.join("CLAUDE.md"), "rules").unwrap();
+    fs::write(work.join("settings.json"), r#"{"model": "x"}"#).unwrap();
+    s.write("shared/settings.json", "{ broken");
+    assert!(!s.run(&["import", "work"]).status.success());
+    assert_eq!(s.read(".claude-work/CLAUDE.md"), "rules");
+    assert_eq!(s.read(".claude-work/settings.json"), r#"{"model": "x"}"#);
+
+    assert_fails(&s.run(&["import", "work"]), "run `cprof sync`");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_broken_link_in_shared_leaves_every_original_in_place() {
+    let s = Sandbox::new();
+    let work = work_dir(&s);
+    fs::write(work.join("CLAUDE.md"), "rules").unwrap();
+    std::os::unix::fs::symlink("/nonexistent", s.src.join("shared/old.md")).unwrap();
+    assert_fails(&s.run(&["import", "work"]), "broken symlink in source");
+    assert_eq!(s.read(".claude-work/CLAUDE.md"), "rules");
+
+    assert_fails(&s.run(&["import", "work"]), "run `cprof sync` to finish it");
+}
+
+#[cfg(unix)]
+#[test]
+fn import_keeps_file_links_pointing_at_the_same_file() {
+    let s = Sandbox::new();
+    let work = work_dir(&s);
+    fs::create_dir_all(s.home.join("dotfiles")).unwrap();
+    fs::write(s.home.join("dotfiles/foo.md"), "foo").unwrap();
+    fs::create_dir_all(work.join("skills")).unwrap();
+    std::os::unix::fs::symlink("../../dotfiles/foo.md", work.join("skills/foo.md")).unwrap();
+    fs::create_dir_all(work.join("commands")).unwrap();
+    fs::write(work.join("commands/b.md"), "b").unwrap();
+    std::os::unix::fs::symlink("b.md", work.join("commands/a.md")).unwrap();
+
+    assert_ok(&s.run(&["import", "work"]));
+    assert_eq!(
+        fs::canonicalize(s.src.join("profiles/work/skills/foo.md")).unwrap(),
+        fs::canonicalize(s.home.join("dotfiles/foo.md")).unwrap()
+    );
+    assert_eq!(s.read(".claude-work/skills/foo.md"), "foo");
+    assert_eq!(s.read(".claude-work/commands/a.md"), "b");
+    assert_eq!(s.read(".claude-work/commands/b.md"), "b");
+    fs::write(s.home.join("dotfiles/foo.md"), "edited").unwrap();
+    assert_eq!(
+        s.read(".claude-work/skills/foo.md"),
+        "edited",
+        "the link stays live"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn import_leaves_folder_links_in_place_and_live() {
+    let s = Sandbox::new();
+    let work = work_dir(&s);
+    fs::create_dir_all(s.home.join("repo")).unwrap();
+    fs::write(s.home.join("repo/SKILL.md"), "skill").unwrap();
+    fs::create_dir_all(work.join("skills")).unwrap();
+    std::os::unix::fs::symlink(s.home.join("repo"), work.join("skills/myskill")).unwrap();
+    std::os::unix::fs::symlink(".", work.join("skills/self")).unwrap();
+    fs::write(work.join("skills/other.md"), "other").unwrap();
+
+    let out = s.run(&["import", "work"]);
+    assert_ok(&out);
+    assert!(stdout(&out).contains("left in place"));
+    assert_eq!(
+        fs::read_link(work.join("skills/myskill")).unwrap(),
+        s.home.join("repo")
+    );
+    fs::write(s.home.join("repo/NEW.md"), "new").unwrap();
+    assert_eq!(s.read(".claude-work/skills/myskill/NEW.md"), "new");
+    assert!(!s.src.join("profiles/work/skills/myskill").exists());
+    assert_eq!(s.read(".claude-work/skills/other.md"), "other");
+}
+
+#[test]
+fn imported_settings_that_differ_from_the_merge_are_kept_until_resolved() {
+    let s = Sandbox::new();
+    s.write("shared/settings.json", r#"{"model": "base"}"#);
+    let work = work_dir(&s);
+    fs::write(work.join("settings.json"), r#"{"env": {"B": "2"}}"#).unwrap();
+    assert_fails(&s.run(&["import", "work"]), "was changed outside cprof");
+    assert_eq!(
+        s.read(".claude-work/settings.json"),
+        r#"{"env": {"B": "2"}}"#
+    );
+
+    fs::remove_file(work.join("settings.json")).unwrap();
+    assert_ok(&s.sync());
+    let merged: serde_json::Value =
+        serde_json::from_str(&s.read(".claude-work/settings.json")).unwrap();
+    assert_eq!(
+        merged,
+        serde_json::json!({"model": "base", "env": {"B": "2"}})
+    );
+}
+
+#[test]
+fn import_refuses_a_config_dir_cprof_already_syncs() {
+    let s = Sandbox::new();
+    s.write("shared/commands/a.md", "a");
+    assert_ok(&s.sync());
+    assert_fails(&s.run(&["import", "work"]), "already synced by cprof");
+}
+
+#[test]
+fn import_rejects_an_unknown_profile() {
+    let s = Sandbox::new();
+    assert_fails(&s.run(&["import", "nope"]), "no profile named \"nope\"");
+    assert_eq!(s.run(&["import"]).status.code(), Some(2));
+}
+
+#[test]
+fn import_with_nothing_to_copy_still_succeeds() {
+    let s = Sandbox::new();
+    let out = s.run(&["import", "work"]);
+    assert_ok(&out);
+    assert!(stdout(&out).contains("nothing to import"));
+}
+
+#[test]
+fn sync_replaces_a_file_identical_to_its_source() {
+    let s = Sandbox::new();
+    s.write("shared/commands/a.md", "same");
+    fs::create_dir_all(s.home.join(".claude/commands")).unwrap();
+    fs::write(s.home.join(".claude/commands/a.md"), "same").unwrap();
+    assert_ok(&s.sync());
+    assert!(
+        fs::symlink_metadata(s.home.join(".claude/commands/a.md"))
+            .unwrap()
+            .is_symlink()
+    );
+}
+
+#[test]
+fn import_leaves_git_repos_in_place() {
+    let s = Sandbox::new();
+    let work = work_dir(&s);
+    fs::create_dir_all(work.join("skills/repo/.git")).unwrap();
+    fs::write(work.join("skills/repo/.git/HEAD"), "ref: refs/heads/main").unwrap();
+    fs::write(work.join("skills/repo/SKILL.md"), "skill").unwrap();
+    fs::write(work.join("skills/other.md"), "other").unwrap();
+
+    let out = s.run(&["import", "work"]);
+    assert_ok(&out);
+    assert!(stdout(&out).contains("a git repo"), "{}", stdout(&out));
+    assert!(!s.src.join("profiles/work/skills/repo").exists());
+    for file in ["skills/repo/.git/HEAD", "skills/repo/SKILL.md"] {
+        assert!(
+            fs::symlink_metadata(work.join(file)).unwrap().is_file(),
+            "{file}"
+        );
+    }
+    assert_eq!(s.read(".claude-work/skills/other.md"), "other");
+}
+
+#[cfg(unix)]
+#[test]
+fn import_refuses_a_symlinked_settings_file() {
+    let s = Sandbox::new();
+    let work = work_dir(&s);
+    fs::write(s.home.join("settings.json"), r#"{"model": "x"}"#).unwrap();
+    std::os::unix::fs::symlink(s.home.join("settings.json"), work.join("settings.json")).unwrap();
+    fs::write(work.join("CLAUDE.md"), "rules").unwrap();
+    assert_fails(&s.run(&["import", "work"]), "settings.json is a symlink");
+    assert!(!s.src.join("profiles/work").exists());
+    assert!(
+        fs::symlink_metadata(work.join("settings.json"))
+            .unwrap()
+            .is_symlink()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn import_names_a_symlink_loop() {
+    let s = Sandbox::new();
+    let work = work_dir(&s);
+    fs::create_dir_all(work.join("commands")).unwrap();
+    std::os::unix::fs::symlink("loop.md", work.join("commands/loop.md")).unwrap();
+    let out = s.run(&["import", "work"]);
+    assert_fails(&out, "can't be followed");
+    assert!(!stderr(&out).contains("broken symlink"), "{}", stderr(&out));
+}
+
+#[cfg(unix)]
+#[test]
+fn sync_leaves_a_foreign_link_to_a_different_file_with_the_same_content() {
+    let s = Sandbox::new();
+    s.write("shared/commands/a.md", "same");
+    fs::write(s.home.join("mine.md"), "same").unwrap();
+    fs::create_dir_all(s.home.join(".claude/commands")).unwrap();
+    std::os::unix::fs::symlink(s.home.join("mine.md"), s.home.join(".claude/commands/a.md"))
+        .unwrap();
+    assert_fails(&s.sync(), "is a symlink not made by cprof");
+    assert_eq!(
+        fs::read_link(s.home.join(".claude/commands/a.md")).unwrap(),
+        s.home.join("mine.md")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn sync_refuses_a_source_that_links_back_to_its_destination() {
+    let s = Sandbox::new();
+    fs::create_dir_all(s.home.join(".claude")).unwrap();
+    fs::write(s.home.join(".claude/CLAUDE.md"), "rules").unwrap();
+    std::os::unix::fs::symlink(
+        s.home.join(".claude/CLAUDE.md"),
+        s.src.join("shared/CLAUDE.md"),
+    )
+    .unwrap();
+    assert_fails(&s.sync(), "leads back to this file");
+    assert!(
+        fs::symlink_metadata(s.home.join(".claude/CLAUDE.md"))
+            .unwrap()
+            .is_file()
+    );
+    assert_eq!(s.read(".claude/CLAUDE.md"), "rules");
+}
+
+#[cfg(unix)]
+#[test]
+fn sync_refuses_a_profile_folder_linked_to_its_config_dir() {
+    let s = Sandbox::new();
+    let work = work_dir(&s);
+    fs::write(work.join("CLAUDE.md"), "rules").unwrap();
+    fs::write(work.join(".credentials.json"), "secret").unwrap();
+    fs::create_dir_all(s.src.join("profiles")).unwrap();
+    std::os::unix::fs::symlink(&work, s.src.join("profiles/work")).unwrap();
+    assert!(!s.sync().status.success());
+    assert_eq!(s.read(".claude-work/CLAUDE.md"), "rules");
+    assert_eq!(s.read(".claude-work/.credentials.json"), "secret");
+}
+
+#[cfg(unix)]
+#[test]
+fn import_points_links_between_config_files_at_the_imported_copies() {
+    let s = Sandbox::new();
+    let work = work_dir(&s);
+    fs::create_dir_all(work.join("commands")).unwrap();
+    fs::write(work.join("commands/b.md"), "b").unwrap();
+    std::os::unix::fs::symlink("b.md", work.join("commands/a.md")).unwrap();
+    fs::write(work.join("history.jsonl"), "history").unwrap();
+    std::os::unix::fs::symlink("../history.jsonl", work.join("commands/h.md")).unwrap();
+
+    let out = s.run(&["import", "work"]);
+    assert_ok(&out);
+    let a = fs::read_link(s.src.join("profiles/work/commands/a.md")).unwrap();
+    assert!(a.starts_with(&s.src), "{}", a.display());
+    assert!(
+        stdout(&out).contains("which is not imported"),
+        "{}",
+        stdout(&out)
+    );
+    assert!(!s.src.join("profiles/work/commands/h.md").exists());
+    assert_eq!(s.read(".claude-work/commands/h.md"), "history");
+    assert_ok(&s.sync());
+}
+
+#[test]
+fn import_works_after_a_sync_that_placed_nothing() {
+    let s = Sandbox::new();
+    let work = work_dir(&s);
+    assert_ok(&s.sync());
+    fs::write(work.join("CLAUDE.md"), "rules").unwrap();
+    assert_ok(&s.run(&["import", "work"]));
+    assert_eq!(s.read(".claude-work/CLAUDE.md"), "rules");
+    assert!(s.src.join("profiles/work/CLAUDE.md").exists());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn sync_refuses_a_source_that_reaches_its_destination_by_another_path() {
+    let s = Sandbox::new();
+    fs::create_dir_all(s.home.join(".claude")).unwrap();
+    fs::write(s.home.join(".claude/CLAUDE.md"), "rules").unwrap();
+    let real = fs::canonicalize(s.home.join(".claude/CLAUDE.md")).unwrap();
+    let firmlinked = Path::new("/System/Volumes/Data").join(real.strip_prefix("/").unwrap());
+    std::os::unix::fs::symlink(firmlinked, s.src.join("shared/CLAUDE.md")).unwrap();
+    assert_fails(&s.sync(), "leads back to this file");
+    assert!(
+        fs::symlink_metadata(s.home.join(".claude/CLAUDE.md"))
+            .unwrap()
+            .is_file()
+    );
+    assert_eq!(s.read(".claude/CLAUDE.md"), "rules");
+}
+
+#[test]
+fn sync_works_with_the_source_tree_inside_a_config_dir() {
+    let s = Sandbox::new();
+    let src = s.home.join(".claude/cprof");
+    fs::create_dir_all(src.join("shared/commands")).unwrap();
+    fs::write(src.join("profiles.json"), CONFIG).unwrap();
+    fs::write(src.join("shared/commands/a.md"), "a").unwrap();
+    assert_ok(&s.cprof(&["sync"]).env("CPROF_HOME", &src).output().unwrap());
+    assert_eq!(s.read(".claude/commands/a.md"), "a");
+    assert_eq!(s.read(".claude-work/commands/a.md"), "a");
+}
+
+#[cfg(unix)]
+#[test]
+fn import_leaves_links_into_a_git_repo_in_place() {
+    let s = Sandbox::new();
+    let work = work_dir(&s);
+    fs::create_dir_all(work.join("skills/repo/.git")).unwrap();
+    fs::write(work.join("skills/repo/SKILL.md"), "skill").unwrap();
+    fs::create_dir_all(work.join("commands")).unwrap();
+    std::os::unix::fs::symlink("../skills/repo/SKILL.md", work.join("commands/s.md")).unwrap();
+    fs::write(work.join("commands/other.md"), "other").unwrap();
+
+    let out = s.run(&["import", "work"]);
+    assert_ok(&out);
+    assert!(
+        stdout(&out).contains("links to a file that stays in place"),
+        "{}",
+        stdout(&out)
+    );
+    assert!(fs::symlink_metadata(s.src.join("profiles/work/commands/s.md")).is_err());
+    assert_eq!(s.read(".claude-work/commands/s.md"), "skill");
+    assert_eq!(s.read(".claude-work/commands/other.md"), "other");
+    assert_ok(&s.sync());
+}
+
+#[test]
+fn a_failed_replacement_puts_the_original_back() {
+    let s = Sandbox::new();
+    s.write("shared/commands/a.md", "same");
+    fs::create_dir_all(s.home.join(".claude/commands")).unwrap();
+    fs::write(s.home.join(".claude/commands/a.md"), "same").unwrap();
+    fs::write(s.home.join(".claude/commands/a.md.cprof-replacing"), "mine").unwrap();
+    assert_fails(&s.sync(), "is in the way");
+    assert_eq!(s.read(".claude/commands/a.md"), "same");
+    assert_eq!(s.read(".claude/commands/a.md.cprof-replacing"), "mine");
+}
+
+#[test]
+fn sync_reports_what_an_interrupted_sync_set_aside() {
+    let s = Sandbox::new();
+    s.write("shared/commands/a.md", "a");
+    fs::create_dir_all(s.home.join(".claude/commands")).unwrap();
+    fs::write(
+        s.home.join(".claude/commands/a.md.cprof-replacing"),
+        "original",
+    )
+    .unwrap();
+    assert_fails(&s.sync(), "is in the way");
+    assert_eq!(s.read(".claude/commands/a.md.cprof-replacing"), "original");
 }

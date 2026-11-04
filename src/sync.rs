@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::{Component, Path, PathBuf};
 use std::{env, fs, io};
 
-const MANIFEST: &str = ".cprof-manifest.json";
+pub const MANIFEST: &str = ".cprof-manifest.json";
 const SETTINGS: &str = "settings.json";
 
 #[derive(Default, Serialize, Deserialize)]
@@ -30,14 +30,18 @@ enum Entry {
     Copy(String),
 }
 
-/// Syncs every profile. Returns false if anything was left unsynced.
-pub fn sync(config: &Config) -> bool {
+/// Syncs every profile, or just `only`. Returns false if anything was left unsynced.
+pub fn sync(config: &Config, only: Option<&str>) -> bool {
     let mut syncer = Syncer {
         source_home: &config.home,
         copy: env::var_os("CPROF_COPY").is_some_and(|v| v == "1"),
         problems: 0,
     };
-    for profile in &config.profiles {
+    for profile in config
+        .profiles
+        .iter()
+        .filter(|p| only.is_none_or(|n| p.name == n))
+    {
         println!("{} ({})", profile.name, profile.config_dir.display());
         if let Err(e) = syncer.sync_profile(config, profile) {
             syncer.problem(&profile.config_dir, e);
@@ -79,7 +83,13 @@ impl Syncer<'_> {
             }
         }
 
-        for (k, (rel, source)) in &wanted {
+        // Links already in the config dir go last: one may lead to another file here, which must
+        // be placed first for the link to lead to the same source.
+        let mut order: Vec<_> = wanted.iter().collect();
+        order.sort_by_key(|(_, (rel, _))| {
+            fs::symlink_metadata(dest_path(target, rel)).is_ok_and(|m| m.is_symlink())
+        });
+        for (k, (rel, source)) in order {
             let dest = dest_path(target, rel);
             match self.place(target, &dest, source, old_by_key.get(k).copied()) {
                 Ok(entry) => {
@@ -119,13 +129,21 @@ impl Syncer<'_> {
         if let Some(link) = symlinked_ancestor(target, dest) {
             bail!("is inside {}, which is a symlink", link.display());
         }
+        let aside = aside_path(dest);
+        if fs::symlink_metadata(&aside).is_ok() {
+            bail!(
+                "{} is in the way; it may be left from an interrupted sync, so check it and delete it",
+                aside.display()
+            );
+        }
         match fs::symlink_metadata(dest) {
             Err(e) if e.kind() == io::ErrorKind::NotFound => {}
             Err(e) => return Err(e.into()),
             Ok(meta) if meta.is_symlink() => {
                 let points_to = fs::read_link(dest)?;
                 let ours = points_to == source
-                    || (recorded == Some(&Entry::Link) && points_to.starts_with(self.source_home));
+                    || (recorded == Some(&Entry::Link) && points_to.starts_with(self.source_home))
+                    || same_real_file(dest, source);
                 if !ours {
                     bail!(
                         "is a symlink not made by cprof; remove it or move its target into {}",
@@ -138,14 +156,17 @@ impl Syncer<'_> {
             }
             Ok(meta) if meta.is_file() => {
                 let current = hash(&fs::read(dest)?);
-                if recorded != Some(&Entry::Copy(current.clone())) {
+                if recorded == Some(&Entry::Copy(current.clone())) {
+                    // A file cprof copied stays a copy, so a re-run changes nothing.
+                    return copy(dest, source, Some(&current));
+                }
+                if !same_content(dest, source) {
                     bail!(
                         "already exists or was edited in place; move what you want to keep into {}, delete it, then re-run",
                         self.source_home.display()
                     );
                 }
-                // A file cprof copied stays a copy, so a re-run changes nothing.
-                return copy(dest, source, Some(&current));
+                // Identical to its source, so replacing it below loses nothing.
             }
             Ok(_) => bail!(
                 "is a directory; move it into {} or delete it",
@@ -154,7 +175,28 @@ impl Syncer<'_> {
         }
 
         fs::create_dir_all(dest.parent().expect("dest is inside the config dir"))?;
-        remove_if_present(dest)?;
+        // Move the original aside: a source that no longer reads once it is moved was this file.
+        let aside = set_aside(dest, aside)?;
+        let placed = if aside.is_some() && fs::metadata(source).is_err() {
+            Err(anyhow::anyhow!(
+                "its source {} leads back to this file; replace that link with the real file",
+                source.display()
+            ))
+        } else {
+            self.link_or_copy(dest, source)
+        };
+        if let Some(aside) = aside {
+            if placed.is_ok() {
+                fs::remove_file(&aside)?;
+            } else {
+                let _ = fs::remove_file(dest);
+                fs::rename(&aside, dest)?;
+            }
+        }
+        placed
+    }
+
+    fn link_or_copy(&mut self, dest: &Path, source: &Path) -> Result<Entry> {
         if !self.copy {
             match symlink(source, dest) {
                 Ok(()) => {
@@ -238,7 +280,12 @@ fn sync_settings(
     if current.as_deref() == Some(new.as_str()) {
         return Ok(Some(new));
     }
-    if !ours {
+    // Same settings, only formatted differently: rewriting it loses nothing.
+    let same_settings = || {
+        let parse = |t: &str| serde_json::from_str::<Value>(t).ok();
+        fs::read_to_string(dest).ok().and_then(|t| parse(&t)) == parse(&text)
+    };
+    if !ours && !same_settings() {
         bail!(
             "was changed outside cprof; copy what you want to keep into your source settings.json, delete this file, then re-run"
         );
@@ -355,6 +402,12 @@ fn walk(
     Ok(())
 }
 
+/// True if cprof has placed anything in this config dir.
+pub fn placed_anything(target: &Path) -> Result<bool> {
+    let manifest = read_manifest(target)?;
+    Ok(!manifest.files.is_empty() || manifest.settings.is_some())
+}
+
 fn read_manifest(target: &Path) -> Result<Manifest> {
     let path = target.join(MANIFEST);
     match fs::read_to_string(&path) {
@@ -414,11 +467,22 @@ fn keep_executable(_dest: &Path, _source: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Manifest paths always use `/`; build them a segment at a time so Windows paths use `\`.
+/// Manifest paths always use `/`. Pushing their components one at a time gives native separators,
+/// and they're the same components `read_manifest` checked are plain names.
 fn dest_path(target: &Path, rel: &str) -> PathBuf {
     let mut path = target.to_path_buf();
-    path.extend(rel.split('/'));
+    path.extend(Path::new(rel).components());
     path
+}
+
+/// True if both files can be read and hold the same bytes, so one can replace the other.
+fn same_content(a: &Path, b: &Path) -> bool {
+    matches!((fs::read(a), fs::read(b)), (Ok(x), Ok(y)) if x == y)
+}
+
+/// True if both paths lead to the same real file, as after `cprof import` copies a file link.
+fn same_real_file(a: &Path, b: &Path) -> bool {
+    matches!((fs::canonicalize(a), fs::canonicalize(b)), (Ok(x), Ok(y)) if x == y)
 }
 
 /// Paths that differ only in letter case are the same file on macOS and Windows.
@@ -438,24 +502,34 @@ fn hash(bytes: &[u8]) -> String {
     format!("{hash:016x}")
 }
 
-fn remove_if_present(path: &Path) -> io::Result<()> {
-    match fs::remove_file(path) {
-        Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
-        _ => Ok(()),
+pub const ASIDE: &str = ".cprof-replacing";
+
+fn aside_path(path: &Path) -> PathBuf {
+    let mut name = path.file_name().expect("dest has a file name").to_owned();
+    name.push(ASIDE);
+    path.with_file_name(name)
+}
+
+/// Renames `path` to `aside`, if there is anything at `path`.
+fn set_aside(path: &Path, aside: PathBuf) -> Result<Option<PathBuf>> {
+    if fs::symlink_metadata(path).is_err() {
+        return Ok(None);
     }
+    fs::rename(path, &aside)?;
+    Ok(Some(aside))
 }
 
 #[cfg(unix)]
-fn symlink(source: &Path, dest: &Path) -> io::Result<()> {
+pub fn symlink(source: &Path, dest: &Path) -> io::Result<()> {
     std::os::unix::fs::symlink(source, dest)
 }
 
 #[cfg(windows)]
-fn symlink(source: &Path, dest: &Path) -> io::Result<()> {
+pub fn symlink(source: &Path, dest: &Path) -> io::Result<()> {
     std::os::windows::fs::symlink_file(source, dest)
 }
 
 /// Windows refuses symlinks (ERROR_PRIVILEGE_NOT_HELD) unless Developer Mode is on or you're an admin.
-fn symlinks_not_allowed(e: &io::Error) -> bool {
+pub fn symlinks_not_allowed(e: &io::Error) -> bool {
     cfg!(windows) && e.raw_os_error() == Some(1314)
 }

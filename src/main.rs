@@ -1,4 +1,5 @@
 mod config;
+mod import;
 mod sync;
 
 use anyhow::{Context, Result, bail};
@@ -13,6 +14,8 @@ const USAGE: &str = "\
 usage: cprof run [args...]          run claude with the profile for the current directory
        cprof which [dir]            print the profile and config dir for dir (default: current dir)
        cprof sync                   link shared and per-profile files into each config dir
+       cprof import <profile>       move a profile's existing commands, hooks and settings
+                                    into the source tree, then sync them back
        cprof init <shell>           print the hook that makes `claude` run through cprof
                                     (bash, zsh or powershell)";
 
@@ -51,7 +54,19 @@ fn run_command(args: Vec<OsString>) -> Result<ExitCode> {
             if !rest.is_empty() {
                 return usage_error();
             }
-            let clean = sync::sync(&Config::load()?);
+            let clean = sync::sync(&Config::load()?, None);
+            Ok(if clean {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            })
+        }
+        Some("import") => {
+            let [name] = rest else {
+                return usage_error();
+            };
+            let name = name.to_str().context("profile names are UTF-8")?;
+            let clean = import::import(&Config::load()?, name)?;
             Ok(if clean {
                 ExitCode::SUCCESS
             } else {
