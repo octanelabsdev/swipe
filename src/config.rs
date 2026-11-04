@@ -38,12 +38,12 @@ pub struct Config {
 impl Config {
     pub fn load() -> Result<Config> {
         let user_home = env::home_dir().context("could not determine your home directory")?;
-        let home = match env::var_os("CPROF_HOME") {
+        let home = match env::var_os("SWIPE_HOME") {
             Some(dir) => PathBuf::from(dir),
             None => env::var_os("XDG_CONFIG_HOME")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| user_home.join(".config"))
-                .join("claude-profiles"),
+                .join("swipe"),
         };
         let home = std::path::absolute(home)?;
         let file = home.join("profiles.json");

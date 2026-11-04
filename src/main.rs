@@ -11,24 +11,24 @@ use std::process::{Command, ExitCode};
 use std::{env, io};
 
 const USAGE: &str = "\
-usage: cprof run [args...]          run claude with the profile for the current directory
-       cprof which [dir]            print the profile and config dir for dir (default: current dir)
-       cprof sync                   link shared and per-profile files into each config dir
-       cprof import <profile>       move a profile's existing commands, hooks and settings
-                                    into the source tree, then sync them back
-       cprof init <shell>           print the hook that makes `claude` run through cprof
-                                    (bash, zsh or powershell)";
+usage: swipe run [args...]        run claude with the profile for the current directory
+       swipe which [dir]          print the profile and config dir for dir (default: current dir)
+       swipe sync                 link shared and per-profile files into each config dir
+       swipe import <profile>     copy a profile's existing commands, hooks and settings
+                                  into the source tree, then sync them back
+       swipe init <shell>         print the hook that makes `claude` run through swipe
+                                  (bash, zsh or powershell)";
 
 const POSIX_HOOK: &str =
-    "unalias claude 2>/dev/null || true\nfunction claude { command cprof run \"$@\"; }\n";
+    "unalias claude 2>/dev/null || true\nfunction claude { command swipe run \"$@\"; }\n";
 const POWERSHELL_HOOK: &str =
-    "Remove-Item Alias:claude -ErrorAction SilentlyContinue\nfunction claude { cprof run @args }\n";
+    "Remove-Item Alias:claude -ErrorAction SilentlyContinue\nfunction claude { swipe run @args }\n";
 
 fn main() -> ExitCode {
     match run_command(env::args_os().skip(1).collect()) {
         Ok(code) => code,
         Err(e) => {
-            eprintln!("cprof: {e:#}");
+            eprintln!("swipe: {e:#}");
             ExitCode::FAILURE
         }
     }
@@ -100,7 +100,7 @@ fn run_claude(args: &[OsString]) -> Result<ExitCode> {
     let claude = find_on_path("claude").context("could not find `claude` on your PATH")?;
 
     if io::stderr().is_terminal() {
-        eprintln!("cprof: {} ({})", profile.name, profile.config_dir.display());
+        eprintln!("swipe: {} ({})", profile.name, profile.config_dir.display());
     }
     let mut command = Command::new(claude);
     command.args(args);
@@ -121,7 +121,7 @@ fn launch(mut command: Command) -> Result<ExitCode> {
 }
 
 /// Windows can't replace a process, so wait for claude instead. Ctrl+C reaches claude directly
-/// through the shared console; ignoring it here keeps cprof from exiting while claude still runs.
+/// through the shared console; ignoring it here keeps swipe from exiting while claude still runs.
 #[cfg(windows)]
 fn launch(mut command: Command) -> Result<ExitCode> {
     ctrlc::set_handler(|| {})?;

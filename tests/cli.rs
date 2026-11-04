@@ -11,7 +11,7 @@ const CONFIG: &str = r#"{
   }
 }"#;
 
-/// A throwaway home directory (with a space in its path) holding a cprof source tree.
+/// A throwaway home directory (with a space in its path) holding a swipe source tree.
 struct Sandbox {
     _dir: tempfile::TempDir,
     root: PathBuf,
@@ -22,7 +22,7 @@ struct Sandbox {
 impl Sandbox {
     fn new() -> Sandbox {
         let dir = tempfile::Builder::new()
-            .prefix("cprof test")
+            .prefix("swipe test")
             .tempdir()
             .unwrap();
         let root = dir.path().to_path_buf();
@@ -41,20 +41,20 @@ impl Sandbox {
         }
     }
 
-    fn cprof(&self, args: &[&str]) -> Command {
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_cprof"));
+    fn swipe(&self, args: &[&str]) -> Command {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_swipe"));
         cmd.args(args)
             .current_dir(&self.home)
             .env("HOME", &self.home)
             .env("USERPROFILE", &self.home)
-            .env("CPROF_HOME", &self.src)
+            .env("SWIPE_HOME", &self.src)
             .env_remove("XDG_CONFIG_HOME")
-            .env_remove("CPROF_COPY");
+            .env_remove("SWIPE_COPY");
         cmd
     }
 
     fn run(&self, args: &[&str]) -> Output {
-        self.cprof(args).output().unwrap()
+        self.swipe(args).output().unwrap()
     }
 
     fn which(&self, dir: &Path) -> String {
@@ -147,7 +147,7 @@ fn which_falls_back_to_the_default() {
 fn which_uses_the_current_dir() {
     let s = Sandbox::new();
     let out = s
-        .cprof(&["which"])
+        .swipe(&["which"])
         .current_dir(s.home.join("IOU"))
         .output()
         .unwrap();
@@ -241,14 +241,14 @@ fn which_fails_without_a_config() {
 }
 
 #[test]
-fn which_uses_xdg_config_home_when_cprof_home_is_unset() {
+fn which_uses_xdg_config_home_when_swipe_home_is_unset() {
     let s = Sandbox::new();
     let xdg = s.root.join("xdg");
-    fs::create_dir_all(xdg.join("claude-profiles")).unwrap();
-    fs::write(xdg.join("claude-profiles/profiles.json"), CONFIG).unwrap();
+    fs::create_dir_all(xdg.join("swipe")).unwrap();
+    fs::write(xdg.join("swipe/profiles.json"), CONFIG).unwrap();
     let out = s
-        .cprof(&["which"])
-        .env_remove("CPROF_HOME")
+        .swipe(&["which"])
+        .env_remove("SWIPE_HOME")
         .env("XDG_CONFIG_HOME", &xdg)
         .current_dir(s.home.join("IOU"))
         .output()
@@ -352,9 +352,9 @@ fn with_fake_claude(s: &Sandbox, cmd: &mut Command) {
             fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
         }
     }
-    let cprof_dir = Path::new(env!("CARGO_BIN_EXE_cprof")).parent().unwrap();
+    let swipe_dir = Path::new(env!("CARGO_BIN_EXE_swipe")).parent().unwrap();
     let path = std::env::join_paths(
-        [bin.as_path(), cprof_dir]
+        [bin.as_path(), swipe_dir]
             .into_iter()
             .map(PathBuf::from)
             .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
@@ -366,7 +366,7 @@ fn with_fake_claude(s: &Sandbox, cmd: &mut Command) {
 #[test]
 fn run_sets_the_config_dir_and_forwards_arguments() {
     let s = Sandbox::new();
-    let mut cmd = s.cprof(&["run", "--resume", "two words"]);
+    let mut cmd = s.swipe(&["run", "--resume", "two words"]);
     cmd.current_dir(s.home.join("IOU/app"));
     with_fake_claude(&s, &mut cmd);
     let out = cmd.output().unwrap();
@@ -382,7 +382,7 @@ fn run_sets_the_config_dir_and_forwards_arguments() {
 #[test]
 fn run_unsets_the_config_dir_for_the_default_claude_dir() {
     let s = Sandbox::new();
-    let mut cmd = s.cprof(&["run", "-p", "hi"]);
+    let mut cmd = s.swipe(&["run", "-p", "hi"]);
     cmd.current_dir(s.home.join("elsewhere"));
     with_fake_claude(&s, &mut cmd);
     let out = cmd.output().unwrap();
@@ -393,7 +393,7 @@ fn run_unsets_the_config_dir_for_the_default_claude_dir() {
 fn run_does_not_start_claude_when_the_profile_cannot_be_resolved() {
     let s = Sandbox::new();
     s.config("{ not json");
-    let mut cmd = s.cprof(&["run"]);
+    let mut cmd = s.swipe(&["run"]);
     with_fake_claude(&s, &mut cmd);
     let out = cmd.output().unwrap();
     assert_fails(&out, "invalid");
@@ -404,7 +404,7 @@ fn run_does_not_start_claude_when_the_profile_cannot_be_resolved() {
 fn run_explains_a_missing_claude() {
     let s = Sandbox::new();
     let out = s
-        .cprof(&["run"])
+        .swipe(&["run"])
         .env("PATH", s.root.join("empty"))
         .output()
         .unwrap();
@@ -419,7 +419,7 @@ fn run_treats_forward_slashes_as_the_default_dir_on_windows() {
     s.config(&format!(
         r#"{{"default": "p", "profiles": {{"p": {{"config_dir": "{home}/.claude"}}}}}}"#
     ));
-    let mut cmd = s.cprof(&["run"]);
+    let mut cmd = s.swipe(&["run"]);
     cmd.current_dir(s.home.join("elsewhere"));
     with_fake_claude(&s, &mut cmd);
     let out = cmd.output().unwrap();
@@ -441,7 +441,7 @@ fn posix_hook_works_in_bash_and_zsh_even_over_an_alias() {
             continue; // not installed
         }
         let script = format!(
-            "{} alias claude=/nonexistent/claude\neval \"$(cprof init {shell})\"\nclaude --resume",
+            "{} alias claude=/nonexistent/claude\neval \"$(swipe init {shell})\"\nclaude --resume",
             if shell == "bash" {
                 "shopt -s expand_aliases;"
             } else {
@@ -453,7 +453,7 @@ fn posix_hook_works_in_bash_and_zsh_even_over_an_alias() {
             .arg(script)
             .current_dir(s.home.join("IOU/app"))
             .env("HOME", &s.home)
-            .env("CPROF_HOME", &s.src);
+            .env("SWIPE_HOME", &s.src);
         with_fake_claude(&s, &mut cmd);
         let out = cmd.output().unwrap();
         assert_eq!(
@@ -470,17 +470,17 @@ fn posix_hook_works_in_bash_and_zsh_even_over_an_alias() {
 
 #[cfg(windows)]
 #[test]
-fn powershell_hook_runs_claude_through_cprof() {
+fn powershell_hook_runs_claude_through_swipe() {
     let s = Sandbox::new();
     let mut cmd = Command::new("pwsh");
     cmd.args([
         "-NoProfile",
         "-Command",
-        "cprof init powershell | Out-String | Invoke-Expression; claude --resume",
+        "swipe init powershell | Out-String | Invoke-Expression; claude --resume",
     ])
     .current_dir(s.home.join("IOU/app"))
     .env("USERPROFILE", &s.home)
-    .env("CPROF_HOME", &s.src);
+    .env("SWIPE_HOME", &s.src);
     with_fake_claude(&s, &mut cmd);
     let out = cmd.output().unwrap();
     assert_eq!(
@@ -560,7 +560,7 @@ fn sync_never_replaces_a_symlink_it_did_not_create() {
     s.write("shared/hooks/h.sh", "source");
     fs::create_dir_all(s.home.join(".claude/hooks")).unwrap();
     std::os::unix::fs::symlink("/etc/hosts", s.home.join(".claude/hooks/h.sh")).unwrap();
-    assert_fails(&s.sync(), "symlink not made by cprof");
+    assert_fails(&s.sync(), "symlink not made by swipe");
     assert_eq!(
         fs::read_link(s.home.join(".claude/hooks/h.sh")).unwrap(),
         Path::new("/etc/hosts")
@@ -656,12 +656,12 @@ fn sync_refuses_to_write_through_a_symlinked_directory_in_the_config_dir() {
 }
 
 #[test]
-fn sync_makes_a_relative_cprof_home_absolute() {
+fn sync_makes_a_relative_swipe_home_absolute() {
     let s = Sandbox::new();
     s.write("shared/commands/a.md", "a");
     let out = s
-        .cprof(&["sync"])
-        .env("CPROF_HOME", "src")
+        .swipe(&["sync"])
+        .env("SWIPE_HOME", "src")
         .current_dir(&s.root)
         .output()
         .unwrap();
@@ -691,10 +691,10 @@ fn sync_follows_two_links_to_the_same_directory() {
 #[test]
 fn sync_ignores_a_source_file_named_like_its_manifest() {
     let s = Sandbox::new();
-    s.write("shared/.cprof-manifest.json", "{\"precious\": 1}");
+    s.write("shared/.swipe-manifest.json", "{\"precious\": 1}");
     assert_ok(&s.sync());
     assert_eq!(
-        fs::read_to_string(s.src.join("shared/.cprof-manifest.json")).unwrap(),
+        fs::read_to_string(s.src.join("shared/.swipe-manifest.json")).unwrap(),
         "{\"precious\": 1}"
     );
 }
@@ -707,7 +707,7 @@ fn a_blocked_file_does_not_stop_the_rest_of_the_profile() {
     fs::create_dir_all(s.home.join(".claude")).unwrap();
     fs::write(
         s.home.join(".claude/commands"),
-        "a file where cprof needs a directory",
+        "a file where swipe needs a directory",
     )
     .unwrap();
     let out = s.sync();
@@ -729,7 +729,7 @@ fn a_blocked_file_does_not_stop_the_rest_of_the_profile() {
 fn an_unreadable_source_file_does_not_orphan_earlier_copies() {
     use std::os::unix::fs::PermissionsExt;
     let s = Sandbox::new();
-    let sync = || s.cprof(&["sync"]).env("CPROF_COPY", "1").output().unwrap();
+    let sync = || s.swipe(&["sync"]).env("SWIPE_COPY", "1").output().unwrap();
     s.write("shared/a.md", "a");
     s.write("shared/b.md", "b");
     fs::set_permissions(s.src.join("shared/b.md"), fs::Permissions::from_mode(0o000)).unwrap();
@@ -760,7 +760,7 @@ fn sync_never_removes_a_symlink_the_user_put_in_place_of_its_own() {
 #[test]
 fn sync_never_removes_through_a_symlinked_directory_in_the_config_dir() {
     let s = Sandbox::new();
-    let sync = || s.cprof(&["sync"]).env("CPROF_COPY", "1").output().unwrap();
+    let sync = || s.swipe(&["sync"]).env("SWIPE_COPY", "1").output().unwrap();
     s.write("shared/plugins/p.json", "{}");
     assert_ok(&sync());
     fs::rename(s.home.join(".claude/plugins"), s.root.join("outside")).unwrap();
@@ -784,7 +784,7 @@ fn profile_files_override_shared_files_whose_names_differ_only_in_case() {
         return; // case-sensitive file system: these really are two different files
     }
     for copy in ["0", "1"] {
-        let sync = || s.cprof(&["sync"]).env("CPROF_COPY", copy).output().unwrap();
+        let sync = || s.swipe(&["sync"]).env("SWIPE_COPY", copy).output().unwrap();
         assert_ok(&sync());
         assert_eq!(s.read(".claude-work/commands/a.md"), "work");
         let again = sync();
@@ -801,10 +801,10 @@ fn profile_files_override_shared_files_whose_names_differ_only_in_case() {
 
 #[cfg(unix)]
 #[test]
-fn a_failed_update_keeps_cprofs_claim_on_its_file() {
+fn a_failed_update_keeps_swipes_claim_on_its_file() {
     use std::os::unix::fs::PermissionsExt;
     let s = Sandbox::new();
-    let sync = || s.cprof(&["sync"]).env("CPROF_COPY", "1").output().unwrap();
+    let sync = || s.swipe(&["sync"]).env("SWIPE_COPY", "1").output().unwrap();
     s.write("shared/a.md", "v1");
     assert_ok(&sync());
     s.write("shared/a.md", "v2");
@@ -818,21 +818,21 @@ fn a_failed_update_keeps_cprofs_claim_on_its_file() {
     assert_ok(&sync());
     assert!(
         !s.home.join(".claude/a.md").exists(),
-        "cprof still removes its own copy"
+        "swipe still removes its own copy"
     );
 }
 
 #[test]
 fn reserved_names_are_skipped_whatever_their_case() {
     let s = Sandbox::new();
-    s.write("shared/.CPROF-MANIFEST.json", "precious");
-    if !s.src.join("shared/.cprof-manifest.json").exists() {
+    s.write("shared/.SWIPE-MANIFEST.json", "precious");
+    if !s.src.join("shared/.swipe-manifest.json").exists() {
         return; // case-sensitive file system: a different name, synced like any other file
     }
     s.write("shared/Settings.json", "{\"model\": \"raw\"}");
     assert_ok(&s.sync());
     assert_eq!(
-        fs::read_to_string(s.src.join("shared/.CPROF-MANIFEST.json")).unwrap(),
+        fs::read_to_string(s.src.join("shared/.SWIPE-MANIFEST.json")).unwrap(),
         "precious"
     );
     // On this file system Settings.json *is* settings.json: it is merged and written as a real file.
@@ -850,11 +850,11 @@ fn manifest_entries_outside_the_config_dir_are_ignored() {
     let s = Sandbox::new();
     s.write("shared/a.md", "a");
     assert_ok(&s.sync());
-    // Something outside the config dir that would pass cprof's ownership check.
+    // Something outside the config dir that would pass swipe's ownership check.
     fs::create_dir_all(s.root.join("outside")).unwrap();
     std::os::unix::fs::symlink(s.src.join("shared/a.md"), s.root.join("outside/victim.md"))
         .unwrap();
-    let manifest = s.home.join(".claude/.cprof-manifest.json");
+    let manifest = s.home.join(".claude/.swipe-manifest.json");
     let tampered = fs::read_to_string(&manifest).unwrap().replace(
         "\"files\": {",
         "\"files\": {\n    \"../../outside/victim.md\": \"link\",",
@@ -869,7 +869,7 @@ fn manifest_entries_outside_the_config_dir_are_ignored() {
 #[test]
 fn copy_mode_copies_updates_and_protects_local_edits() {
     let s = Sandbox::new();
-    let sync = || s.cprof(&["sync"]).env("CPROF_COPY", "1").output().unwrap();
+    let sync = || s.swipe(&["sync"]).env("SWIPE_COPY", "1").output().unwrap();
     s.write("shared/commands/a.md", "v1");
     s.write("shared/commands/b.md", "b");
     assert_ok(&sync());
@@ -942,7 +942,7 @@ fn settings_are_rewritten_when_the_source_changes() {
 }
 
 #[test]
-fn settings_edited_outside_cprof_are_kept() {
+fn settings_edited_outside_swipe_are_kept() {
     let s = Sandbox::new();
     s.write("shared/settings.json", r#"{"model": "a"}"#);
     assert_ok(&s.sync());
@@ -952,7 +952,7 @@ fn settings_edited_outside_cprof_are_kept() {
     )
     .unwrap();
     s.write("shared/settings.json", r#"{"model": "b"}"#);
-    assert_fails(&s.sync(), "was changed outside cprof");
+    assert_fails(&s.sync(), "was changed outside swipe");
     assert_eq!(
         s.read(".claude/settings.json"),
         r#"{"model": "a", "theme": "dark"}"#
@@ -960,7 +960,7 @@ fn settings_edited_outside_cprof_are_kept() {
 }
 
 #[test]
-fn settings_that_cprof_never_wrote_are_kept() {
+fn settings_that_swipe_never_wrote_are_kept() {
     let s = Sandbox::new();
     s.write("shared/settings.json", r#"{"model": "a"}"#);
     fs::create_dir_all(s.home.join(".claude")).unwrap();
@@ -969,7 +969,7 @@ fn settings_that_cprof_never_wrote_are_kept() {
         "{\"theme\": \"light\"}",
     )
     .unwrap();
-    assert_fails(&s.sync(), "was changed outside cprof");
+    assert_fails(&s.sync(), "was changed outside swipe");
     assert_eq!(s.read(".claude/settings.json"), "{\"theme\": \"light\"}");
 }
 
@@ -1041,7 +1041,7 @@ fn sync_never_takes_over_a_users_own_link_into_the_source_tree() {
     )
     .unwrap();
     s.write("shared/CLAUDE.md", "shared rules");
-    assert_fails(&s.sync(), "symlink not made by cprof");
+    assert_fails(&s.sync(), "symlink not made by swipe");
     assert_eq!(s.read(".claude-work/CLAUDE.md"), "my notes");
 }
 
@@ -1073,7 +1073,7 @@ fn copies_keep_the_executable_bit() {
         fs::Permissions::from_mode(0o755),
     )
     .unwrap();
-    assert_ok(&s.cprof(&["sync"]).env("CPROF_COPY", "1").output().unwrap());
+    assert_ok(&s.swipe(&["sync"]).env("SWIPE_COPY", "1").output().unwrap());
     let mode = fs::metadata(s.home.join(".claude/hooks/h.sh"))
         .unwrap()
         .permissions()
@@ -1104,7 +1104,7 @@ fn a_tie_does_not_hide_a_deeper_match() {
 fn copies_follow_later_permission_changes_but_stay_writable() {
     use std::os::unix::fs::PermissionsExt;
     let s = Sandbox::new();
-    let sync = || s.cprof(&["sync"]).env("CPROF_COPY", "1").output().unwrap();
+    let sync = || s.swipe(&["sync"]).env("SWIPE_COPY", "1").output().unwrap();
     let mode = |rel: &str| fs::metadata(s.home.join(rel)).unwrap().permissions().mode();
     s.write("shared/h.sh", "#!/bin/sh\n");
     s.write("shared/ro.md", "a");
@@ -1203,7 +1203,7 @@ fn import_changes_nothing_if_any_destination_exists() {
     s.write("profiles/work/CLAUDE.md", "already here");
     assert_fails(&s.run(&["import", "work"]), "nothing was imported");
     assert_eq!(s.read(".claude-work/CLAUDE.md"), "rules");
-    assert!(!work.join(".cprof-manifest.json").exists());
+    assert!(!work.join(".swipe-manifest.json").exists());
 }
 
 #[test]
@@ -1243,7 +1243,7 @@ fn a_failed_copy_changes_nothing_and_can_be_retried() {
     fs::set_permissions(s.src.join("profiles"), fs::Permissions::from_mode(0o755)).unwrap();
     assert_fails(&failed, "nothing was imported");
     assert_eq!(s.read(".claude-work/CLAUDE.md"), "rules");
-    assert!(!work.join(".cprof-manifest.json").exists());
+    assert!(!work.join(".swipe-manifest.json").exists());
 
     assert_ok(&s.run(&["import", "work"]));
     assert_eq!(s.read(".claude-work/CLAUDE.md"), "rules");
@@ -1260,7 +1260,7 @@ fn a_failing_sync_after_import_leaves_every_original_in_place() {
     assert_eq!(s.read(".claude-work/CLAUDE.md"), "rules");
     assert_eq!(s.read(".claude-work/settings.json"), r#"{"model": "x"}"#);
 
-    assert_fails(&s.run(&["import", "work"]), "run `cprof sync`");
+    assert_fails(&s.run(&["import", "work"]), "run `swipe sync`");
 }
 
 #[cfg(unix)]
@@ -1273,7 +1273,7 @@ fn a_broken_link_in_shared_leaves_every_original_in_place() {
     assert_fails(&s.run(&["import", "work"]), "broken symlink in source");
     assert_eq!(s.read(".claude-work/CLAUDE.md"), "rules");
 
-    assert_fails(&s.run(&["import", "work"]), "run `cprof sync` to finish it");
+    assert_fails(&s.run(&["import", "work"]), "run `swipe sync` to finish it");
 }
 
 #[cfg(unix)]
@@ -1336,7 +1336,7 @@ fn imported_settings_that_differ_from_the_merge_are_kept_until_resolved() {
     s.write("shared/settings.json", r#"{"model": "base"}"#);
     let work = work_dir(&s);
     fs::write(work.join("settings.json"), r#"{"env": {"B": "2"}}"#).unwrap();
-    assert_fails(&s.run(&["import", "work"]), "was changed outside cprof");
+    assert_fails(&s.run(&["import", "work"]), "was changed outside swipe");
     assert_eq!(
         s.read(".claude-work/settings.json"),
         r#"{"env": {"B": "2"}}"#
@@ -1353,11 +1353,11 @@ fn imported_settings_that_differ_from_the_merge_are_kept_until_resolved() {
 }
 
 #[test]
-fn import_refuses_a_config_dir_cprof_already_syncs() {
+fn import_refuses_a_config_dir_swipe_already_syncs() {
     let s = Sandbox::new();
     s.write("shared/commands/a.md", "a");
     assert_ok(&s.sync());
-    assert_fails(&s.run(&["import", "work"]), "already synced by cprof");
+    assert_fails(&s.run(&["import", "work"]), "already synced by swipe");
 }
 
 #[test]
@@ -1449,7 +1449,7 @@ fn sync_leaves_a_foreign_link_to_a_different_file_with_the_same_content() {
     fs::create_dir_all(s.home.join(".claude/commands")).unwrap();
     std::os::unix::fs::symlink(s.home.join("mine.md"), s.home.join(".claude/commands/a.md"))
         .unwrap();
-    assert_fails(&s.sync(), "is a symlink not made by cprof");
+    assert_fails(&s.sync(), "is a symlink not made by swipe");
     assert_eq!(
         fs::read_link(s.home.join(".claude/commands/a.md")).unwrap(),
         s.home.join("mine.md")
@@ -1547,11 +1547,11 @@ fn sync_refuses_a_source_that_reaches_its_destination_by_another_path() {
 #[test]
 fn sync_works_with_the_source_tree_inside_a_config_dir() {
     let s = Sandbox::new();
-    let src = s.home.join(".claude/cprof");
+    let src = s.home.join(".claude/swipe");
     fs::create_dir_all(src.join("shared/commands")).unwrap();
     fs::write(src.join("profiles.json"), CONFIG).unwrap();
     fs::write(src.join("shared/commands/a.md"), "a").unwrap();
-    assert_ok(&s.cprof(&["sync"]).env("CPROF_HOME", &src).output().unwrap());
+    assert_ok(&s.swipe(&["sync"]).env("SWIPE_HOME", &src).output().unwrap());
     assert_eq!(s.read(".claude/commands/a.md"), "a");
     assert_eq!(s.read(".claude-work/commands/a.md"), "a");
 }
@@ -1586,10 +1586,10 @@ fn a_failed_replacement_puts_the_original_back() {
     s.write("shared/commands/a.md", "same");
     fs::create_dir_all(s.home.join(".claude/commands")).unwrap();
     fs::write(s.home.join(".claude/commands/a.md"), "same").unwrap();
-    fs::write(s.home.join(".claude/commands/a.md.cprof-replacing"), "mine").unwrap();
+    fs::write(s.home.join(".claude/commands/a.md.swipe-replacing"), "mine").unwrap();
     assert_fails(&s.sync(), "is in the way");
     assert_eq!(s.read(".claude/commands/a.md"), "same");
-    assert_eq!(s.read(".claude/commands/a.md.cprof-replacing"), "mine");
+    assert_eq!(s.read(".claude/commands/a.md.swipe-replacing"), "mine");
 }
 
 #[test]
@@ -1598,10 +1598,35 @@ fn sync_reports_what_an_interrupted_sync_set_aside() {
     s.write("shared/commands/a.md", "a");
     fs::create_dir_all(s.home.join(".claude/commands")).unwrap();
     fs::write(
-        s.home.join(".claude/commands/a.md.cprof-replacing"),
+        s.home.join(".claude/commands/a.md.swipe-replacing"),
         "original",
     )
     .unwrap();
     assert_fails(&s.sync(), "is in the way");
-    assert_eq!(s.read(".claude/commands/a.md.cprof-replacing"), "original");
+    assert_eq!(s.read(".claude/commands/a.md.swipe-replacing"), "original");
+}
+
+#[test]
+fn import_reports_what_an_interrupted_sync_set_aside() {
+    let s = Sandbox::new();
+    let work = work_dir(&s);
+    fs::create_dir_all(work.join("agents")).unwrap();
+    fs::write(work.join("agents/rev.md.swipe-replacing"), "original").unwrap();
+    fs::write(work.join("agents/keep.md"), "keep").unwrap();
+    let out = s.run(&["import", "work"]);
+    assert_ok(&out);
+    assert!(
+        stdout(&out).contains("left by an interrupted sync"),
+        "{}",
+        stdout(&out)
+    );
+    assert!(
+        !s.src
+            .join("profiles/work/agents/rev.md.swipe-replacing")
+            .exists()
+    );
+    assert_eq!(
+        s.read(".claude-work/agents/rev.md.swipe-replacing"),
+        "original"
+    );
 }

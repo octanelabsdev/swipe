@@ -1,8 +1,8 @@
 //! Builds each profile's config dir from `shared/` plus `profiles/<name>/`.
 //!
 //! Files are symlinked to the source, or copied where symlinks aren't allowed (Windows without
-//! Developer Mode) or `CPROF_COPY=1` is set. `settings.json` is merged from both sources and
-//! written as a real file. A manifest in each config dir records what cprof wrote, so it never
+//! Developer Mode) or `SWIPE_COPY=1` is set. `settings.json` is merged from both sources and
+//! written as a real file. A manifest in each config dir records what swipe wrote, so it never
 //! overwrites or deletes anything it didn't create.
 
 use crate::config::{Config, IGNORES_CASE, Profile};
@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::{Component, Path, PathBuf};
 use std::{env, fs, io};
 
-pub const MANIFEST: &str = ".cprof-manifest.json";
+pub const MANIFEST: &str = ".swipe-manifest.json";
 const SETTINGS: &str = "settings.json";
 
 #[derive(Default, Serialize, Deserialize)]
@@ -22,7 +22,7 @@ struct Manifest {
     settings: Option<String>,
 }
 
-/// How cprof placed a file: a symlink to the source, or a copy with the hash it had when written.
+/// How swipe placed a file: a symlink to the source, or a copy with the hash it had when written.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum Entry {
@@ -34,7 +34,7 @@ enum Entry {
 pub fn sync(config: &Config, only: Option<&str>) -> bool {
     let mut syncer = Syncer {
         source_home: &config.home,
-        copy: env::var_os("CPROF_COPY").is_some_and(|v| v == "1"),
+        copy: env::var_os("SWIPE_COPY").is_some_and(|v| v == "1"),
         problems: 0,
     };
     for profile in config
@@ -49,7 +49,7 @@ pub fn sync(config: &Config, only: Option<&str>) -> bool {
     }
     if syncer.problems > 0 {
         eprintln!(
-            "cprof: {} problem(s); anything cprof did not create was left alone",
+            "swipe: {} problem(s); anything swipe did not create was left alone",
             syncer.problems
         );
     }
@@ -118,7 +118,7 @@ impl Syncer<'_> {
         Ok(())
     }
 
-    /// Links or copies one file, unless something cprof didn't create is in the way.
+    /// Links or copies one file, unless something swipe didn't create is in the way.
     fn place(
         &mut self,
         target: &Path,
@@ -146,7 +146,7 @@ impl Syncer<'_> {
                     || same_real_file(dest, source);
                 if !ours {
                     bail!(
-                        "is a symlink not made by cprof; remove it or move its target into {}",
+                        "is a symlink not made by swipe; remove it or move its target into {}",
                         self.source_home.display()
                     );
                 }
@@ -157,7 +157,7 @@ impl Syncer<'_> {
             Ok(meta) if meta.is_file() => {
                 let current = hash(&fs::read(dest)?);
                 if recorded == Some(&Entry::Copy(current.clone())) {
-                    // A file cprof copied stays a copy, so a re-run changes nothing.
+                    // A file swipe copied stays a copy, so a re-run changes nothing.
                     return copy(dest, source, Some(&current));
                 }
                 if !same_content(dest, source) {
@@ -204,7 +204,7 @@ impl Syncer<'_> {
                     return Ok(Entry::Link);
                 }
                 Err(e) if symlinks_not_allowed(&e) => {
-                    println!("  symlinks are not allowed here, so cprof will copy files instead");
+                    println!("  symlinks are not allowed here, so swipe will copy files instead");
                     self.copy = true;
                 }
                 Err(e) => return Err(e.into()),
@@ -214,16 +214,16 @@ impl Syncer<'_> {
     }
 
     fn problem(&mut self, path: &Path, error: anyhow::Error) {
-        eprintln!("cprof: {}: {error:#}", path.display());
+        eprintln!("swipe: {}: {error:#}", path.display());
         self.problems += 1;
     }
 }
 
-/// Removes a file cprof placed, if it is still exactly what cprof put there.
+/// Removes a file swipe placed, if it is still exactly what swipe put there.
 fn prune(source_home: &Path, target: &Path, dest: &Path, recorded: &Entry) -> Result<()> {
     if let Some(link) = symlinked_ancestor(target, dest) {
         bail!(
-            "is inside {}, which is a symlink, so cprof left it alone",
+            "is inside {}, which is a symlink, so swipe left it alone",
             link.display()
         );
     }
@@ -248,8 +248,8 @@ fn prune(source_home: &Path, target: &Path, dest: &Path, recorded: &Entry) -> Re
     Ok(())
 }
 
-/// Writes the merged settings, or removes cprof's settings.json once no source has any.
-/// Returns the hash of what is now cprof's settings.json.
+/// Writes the merged settings, or removes swipe's settings.json once no source has any.
+/// Returns the hash of what is now swipe's settings.json.
 fn sync_settings(
     config: &Config,
     profile: &Profile,
@@ -262,7 +262,7 @@ fn sync_settings(
         Err(e) => return Err(e.into()),
         Ok(meta) if meta.is_symlink() => {
             bail!(
-                "is a symlink; cprof writes settings.json as a real file, so remove the link and re-run"
+                "is a symlink; swipe writes settings.json as a real file, so remove the link and re-run"
             )
         }
         Ok(_) => Some(hash(&fs::read(dest)?)),
@@ -287,7 +287,7 @@ fn sync_settings(
     };
     if !ours && !same_settings() {
         bail!(
-            "was changed outside cprof; copy what you want to keep into your source settings.json, delete this file, then re-run"
+            "was changed outside swipe; copy what you want to keep into your source settings.json, delete this file, then re-run"
         );
     }
     println!("  write {}", dest.display());
@@ -402,7 +402,7 @@ fn walk(
     Ok(())
 }
 
-/// True if cprof has placed anything in this config dir.
+/// True if swipe has placed anything in this config dir.
 pub fn placed_anything(target: &Path) -> Result<bool> {
     let manifest = read_manifest(target)?;
     Ok(!manifest.files.is_empty() || manifest.settings.is_some())
@@ -414,7 +414,7 @@ fn read_manifest(target: &Path) -> Result<Manifest> {
         Ok(text) => {
             let mut manifest: Manifest = serde_json::from_str(&text)
                 .with_context(|| format!("{} is corrupt; delete it and re-run", path.display()))?;
-            // Entries are always plain relative paths; anything else wasn't written by cprof.
+            // Entries are always plain relative paths; anything else wasn't written by swipe.
             manifest.files.retain(|rel, _| {
                 Path::new(rel)
                     .components()
@@ -450,7 +450,7 @@ fn copy(dest: &Path, source: &Path, current: Option<&str>) -> Result<Entry> {
 }
 
 /// Gives the copy the source's executable bits, so a copied hook script still runs. Only those
-/// bits: a read-only source must not make a copy cprof can't update later.
+/// bits: a read-only source must not make a copy swipe can't update later.
 #[cfg(unix)]
 fn keep_executable(dest: &Path, source: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
@@ -480,7 +480,7 @@ fn same_content(a: &Path, b: &Path) -> bool {
     matches!((fs::read(a), fs::read(b)), (Ok(x), Ok(y)) if x == y)
 }
 
-/// True if both paths lead to the same real file, as after `cprof import` copies a file link.
+/// True if both paths lead to the same real file, as after `swipe import` copies a file link.
 fn same_real_file(a: &Path, b: &Path) -> bool {
     matches!((fs::canonicalize(a), fs::canonicalize(b)), (Ok(x), Ok(y)) if x == y)
 }
@@ -502,7 +502,7 @@ fn hash(bytes: &[u8]) -> String {
     format!("{hash:016x}")
 }
 
-pub const ASIDE: &str = ".cprof-replacing";
+pub const ASIDE: &str = ".swipe-replacing";
 
 fn aside_path(path: &Path) -> PathBuf {
     let mut name = path.file_name().expect("dest has a file name").to_owned();

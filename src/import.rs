@@ -34,7 +34,7 @@ pub fn import(config: &Config, name: &str) -> Result<bool> {
 
     if sync::placed_anything(target)? {
         bail!(
-            "{} is already synced by cprof; if an earlier import stopped with problems, fix them and run `cprof sync`, otherwise copy any remaining files into {} by hand",
+            "{} is already synced by swipe; if an earlier import stopped with problems, fix them and run `swipe sync`, otherwise copy any remaining files into {} by hand",
             target.display(),
             into.display()
         );
@@ -48,7 +48,7 @@ pub fn import(config: &Config, name: &str) -> Result<bool> {
         let to = into.join(item);
         if fs::symlink_metadata(&to).is_ok() {
             bail!(
-                "{} already exists, so nothing was imported; if an earlier import got this far, run `cprof sync` to finish it",
+                "{} already exists, so nothing was imported; if an earlier import got this far, run `swipe sync` to finish it",
                 to.display()
             );
         }
@@ -56,7 +56,7 @@ pub fn import(config: &Config, name: &str) -> Result<bool> {
     let settings = target.join("settings.json");
     if fs::symlink_metadata(&settings).is_ok_and(|m| m.is_symlink()) {
         bail!(
-            "{} is a symlink; cprof writes settings.json as a real file, so replace the link with a copy of its file and re-run; nothing was imported",
+            "{} is a symlink; swipe writes settings.json as a real file, so replace the link with a copy of its file and re-run; nothing was imported",
             settings.display()
         );
     }
@@ -108,7 +108,7 @@ pub fn import(config: &Config, name: &str) -> Result<bool> {
             println!("import {}", target.join(item).display());
             fs::rename(staging.join(item), into.join(item)).with_context(|| {
                 format!(
-                    "could not move {item} into {}; move what is left in {} there by hand, then run `cprof sync`",
+                    "could not move {item} into {}; move what is left in {} there by hand, then run `swipe sync`",
                     into.display(),
                     staging.display()
                 )
@@ -144,7 +144,11 @@ impl Copier<'_> {
     /// keeps working.
     fn copy(&mut self, from: &Path, to: &Path) -> Result<()> {
         if from.to_string_lossy().ends_with(sync::ASIDE) {
-            return Ok(()); // left by an interrupted sync, which reports it
+            self.notes.push(format!(
+                "left in place: {} (left by an interrupted sync; check it and delete it)",
+                from.display()
+            ));
+            return Ok(());
         }
         let meta = fs::symlink_metadata(from)?;
         if meta.is_symlink() {
