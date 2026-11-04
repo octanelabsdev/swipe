@@ -72,7 +72,7 @@ impl Syncer<'_> {
             if wanted.contains_key(&key(rel)) {
                 continue;
             }
-            let dest = target.join(rel);
+            let dest = dest_path(target, rel);
             if let Err(e) = prune(self.source_home, target, &dest, entry) {
                 self.problem(&dest, e);
                 new.files.insert(rel.clone(), entry.clone()); // still ours; retry next time
@@ -80,7 +80,7 @@ impl Syncer<'_> {
         }
 
         for (k, (rel, source)) in &wanted {
-            let dest = target.join(rel);
+            let dest = dest_path(target, rel);
             match self.place(target, &dest, source, old_by_key.get(k).copied()) {
                 Ok(entry) => {
                     new.files.insert(rel.clone(), entry);
@@ -124,7 +124,9 @@ impl Syncer<'_> {
             Err(e) => return Err(e.into()),
             Ok(meta) if meta.is_symlink() => {
                 let points_to = fs::read_link(dest)?;
-                if !points_to.starts_with(self.source_home) {
+                let ours = points_to == source
+                    || (recorded == Some(&Entry::Link) && points_to.starts_with(self.source_home));
+                if !ours {
                     bail!(
                         "is a symlink not made by cprof; remove it or move its target into {}",
                         self.source_home.display()
@@ -390,7 +392,33 @@ fn copy(dest: &Path, source: &Path, current: Option<&str>) -> Result<Entry> {
         println!("  copy {} -> {}", dest.display(), source.display());
         fs::write(dest, &contents)?;
     }
+    keep_executable(dest, source)?;
     Ok(Entry::Copy(new))
+}
+
+/// Gives the copy the source's executable bits, so a copied hook script still runs. Only those
+/// bits: a read-only source must not make a copy cprof can't update later.
+#[cfg(unix)]
+fn keep_executable(dest: &Path, source: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = fs::metadata(dest)?.permissions().mode();
+    let wanted = (mode & !0o111) | (fs::metadata(source)?.permissions().mode() & 0o111);
+    if wanted != mode {
+        fs::set_permissions(dest, fs::Permissions::from_mode(wanted))?;
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn keep_executable(_dest: &Path, _source: &Path) -> Result<()> {
+    Ok(())
+}
+
+/// Manifest paths always use `/`; build them a segment at a time so Windows paths use `\`.
+fn dest_path(target: &Path, rel: &str) -> PathBuf {
+    let mut path = target.to_path_buf();
+    path.extend(rel.split('/'));
+    path
 }
 
 /// Paths that differ only in letter case are the same file on macOS and Windows.

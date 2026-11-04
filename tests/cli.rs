@@ -365,7 +365,7 @@ fn with_fake_claude(s: &Sandbox, cmd: &mut Command) {
 
 fn unset() -> &'static str {
     if cfg!(windows) {
-        "%CLAUDE_CONFIG_DIR%"
+        "" // cmd expands an unset variable to nothing inside a batch file
     } else {
         "<unset>"
     }
@@ -1036,4 +1036,113 @@ fn settings_are_never_written_through_a_symlink() {
     .unwrap();
     assert_fails(&s.sync(), "is a symlink");
     assert!(!s.root.join("outside/settings.json").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn sync_never_takes_over_a_users_own_link_into_the_source_tree() {
+    let s = Sandbox::new();
+    s.write("notes/CLAUDE.md", "my notes");
+    fs::create_dir_all(s.home.join(".claude-work")).unwrap();
+    std::os::unix::fs::symlink(
+        s.src.join("notes/CLAUDE.md"),
+        s.home.join(".claude-work/CLAUDE.md"),
+    )
+    .unwrap();
+    s.write("shared/CLAUDE.md", "shared rules");
+    assert_fails(&s.sync(), "symlink not made by cprof");
+    assert_eq!(s.read(".claude-work/CLAUDE.md"), "my notes");
+}
+
+#[cfg(unix)]
+#[test]
+fn which_refuses_two_profiles_matching_the_same_directory() {
+    let s = Sandbox::new();
+    fs::create_dir_all(s.home.join("proj")).unwrap();
+    std::os::unix::fs::symlink(s.home.join("proj"), s.home.join("projlink")).unwrap();
+    s.config(
+        r#"{"profiles": {
+        "work": {"config_dir": "~/.claude-work", "paths": ["~/proj"]},
+        "alpha": {"config_dir": "~/.claude-alpha", "paths": ["~/projlink"]}}}"#,
+    );
+    assert_fails(
+        &s.run(&["which", s.home.join("proj").to_str().unwrap()]),
+        "all match",
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn copies_keep_the_executable_bit() {
+    use std::os::unix::fs::PermissionsExt;
+    let s = Sandbox::new();
+    s.write("shared/hooks/h.sh", "#!/bin/sh\n");
+    fs::set_permissions(
+        s.src.join("shared/hooks/h.sh"),
+        fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    assert_ok(&s.cprof(&["sync"]).env("CPROF_COPY", "1").output().unwrap());
+    let mode = fs::metadata(s.home.join(".claude/hooks/h.sh"))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o111, 0o111, "mode was {mode:o}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_tie_does_not_hide_a_deeper_match() {
+    let s = Sandbox::new();
+    fs::create_dir_all(s.home.join("proj/sub")).unwrap();
+    std::os::unix::fs::symlink(s.home.join("proj"), s.home.join("projlink")).unwrap();
+    s.config(
+        r#"{"profiles": {
+        "alpha": {"config_dir": "~/.claude-alpha", "paths": ["~/projlink"]},
+        "beta": {"config_dir": "~/.claude-beta", "paths": ["~/proj"]},
+        "zeta": {"config_dir": "~/.claude-zeta", "paths": ["~/proj/sub"]}}}"#,
+    );
+    assert_eq!(
+        s.which(&s.home.join("proj/sub")),
+        s.expect("zeta", ".claude-zeta")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn copies_follow_later_permission_changes_but_stay_writable() {
+    use std::os::unix::fs::PermissionsExt;
+    let s = Sandbox::new();
+    let sync = || s.cprof(&["sync"]).env("CPROF_COPY", "1").output().unwrap();
+    let mode = |rel: &str| fs::metadata(s.home.join(rel)).unwrap().permissions().mode();
+    s.write("shared/h.sh", "#!/bin/sh\n");
+    s.write("shared/ro.md", "a");
+    fs::set_permissions(
+        s.src.join("shared/ro.md"),
+        fs::Permissions::from_mode(0o444),
+    )
+    .unwrap();
+    assert_ok(&sync());
+    assert_eq!(mode(".claude/h.sh") & 0o111, 0);
+
+    fs::set_permissions(s.src.join("shared/h.sh"), fs::Permissions::from_mode(0o755)).unwrap();
+    assert_ok(&sync());
+    assert_eq!(
+        mode(".claude/h.sh") & 0o111,
+        0o111,
+        "chmod +x reaches the copy"
+    );
+
+    fs::set_permissions(
+        s.src.join("shared/ro.md"),
+        fs::Permissions::from_mode(0o644),
+    )
+    .unwrap();
+    s.write("shared/ro.md", "b");
+    assert_ok(&sync());
+    assert_eq!(
+        s.read(".claude/ro.md"),
+        "b",
+        "a read-only source still leaves an updatable copy"
+    );
 }

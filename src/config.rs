@@ -111,21 +111,34 @@ impl Config {
     pub fn profile_for(&self, dir: &Path) -> Result<&Profile> {
         let dir = fs::canonicalize(dir)
             .with_context(|| format!("no such directory: {}", dir.display()))?;
-        let mut best: Option<(&Profile, usize)> = None;
+        // Every profile with a path containing `dir`, and how deep that path is.
+        let mut matches: Vec<(&Profile, usize)> = Vec::new();
         for profile in &self.profiles {
             for path in &profile.paths {
                 // A path that doesn't exist (or can't be read) can't contain the working directory.
-                let Ok(path) = fs::canonicalize(path) else {
-                    continue;
-                };
-                let depth = path.components().count();
-                if dir.starts_with(&path) && best.is_none_or(|(_, d)| depth > d) {
-                    best = Some((profile, depth));
+                if let Ok(path) = fs::canonicalize(path)
+                    && dir.starts_with(&path)
+                {
+                    matches.push((profile, path.components().count()));
                 }
             }
         }
-        if let Some((profile, _)) = best {
-            return Ok(profile);
+        if let Some(deepest) = matches.iter().map(|&(_, depth)| depth).max() {
+            let mut winners: Vec<&Profile> = matches
+                .into_iter()
+                .filter(|&(_, depth)| depth == deepest)
+                .map(|(profile, _)| profile)
+                .collect();
+            winners.dedup_by(|a, b| a.name == b.name);
+            if let [profile] = winners[..] {
+                return Ok(profile);
+            }
+            let names: Vec<&str> = winners.iter().map(|p| p.name.as_str()).collect();
+            bail!(
+                "profiles {} all match {}; give one a more specific path",
+                names.join(", "),
+                dir.display()
+            );
         }
         match &self.default {
             Some(name) => Ok(self
