@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+    <url>
+         <loc>https://swipe.octanelabs.dev/</loc>
+         <lastmod>2026-11-05</lastmod>
+    </url>
+    <url>
+         <loc>https://swipe.octanelabs.dev/commands/</loc>
+         <lastmod>2026-11-05</lastmod>
+    </url>
+    <url>
+         <loc>https://swipe.octanelabs.dev/concepts/</loc>
+         <lastmod>2026-11-05</lastmod>
+    </url>
+    <url>
+         <loc>https://swipe.octanelabs.dev/configuration/</loc>
+         <lastmod>2026-11-05</lastmod>
+    </url>
+    <url>
+         <loc>https://swipe.octanelabs.dev/install/</loc>
+         <lastmod>2026-11-05</lastmod>
+    </url>
+    <url>
+         <loc>https://swipe.octanelabs.dev/migrating/</loc>
+         <lastmod>2026-11-05</lastmod>
+    </url>
+    <url>
+         <loc>https://swipe.octanelabs.dev/syncing/</loc>
+         <lastmod>2026-11-05</lastmod>
+    </url>
+    <url>
+         <loc>https://swipe.octanelabs.dev/troubleshooting/</loc>
+         <lastmod>2026-11-05</lastmod>
+    </url>
+</urlset>
