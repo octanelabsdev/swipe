@@ -78,6 +78,9 @@ work (/Users/you/.claude-work)
   from another repo, are left exactly where they are, so they stay live. The import lists them as
   "left in place".
 - **Git repos** (any folder with a `.git` inside) are left in place too, so git keeps working.
+- **Folders Claude Code fills in itself** stay where they are: `skills/synced/` (skills from
+  claude.ai, which differ between accounts) and `skills/.trash/`. So do folders a tool rebuilds on
+  each machine: `.venv`, `node_modules` and `__pycache__`.
 - A link from one of your files to another one in the same config directory is pointed at the
   imported copy. A link to something that isn't imported, such as `history.jsonl`, is left in
   place.
