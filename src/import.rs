@@ -22,6 +22,12 @@ const IMPORTABLE: &[&str] = &[
     "skills",
 ];
 
+/// Folders inside those that Claude Code fills in itself, for one account only.
+const CLAUDE_MANAGED: &[&str] = &["skills/synced", "skills/.trash"];
+
+/// Folders a tool rebuilds for each machine.
+const REBUILT: &[&str] = &[".venv", "node_modules", "__pycache__"];
+
 /// Returns false if anything was left behind or the follow-up sync had problems.
 pub fn import(config: &Config, name: &str) -> Result<bool> {
     let profile = config
@@ -85,6 +91,7 @@ pub fn import(config: &Config, name: &str) -> Result<bool> {
         fs::remove_dir_all(&staging)?; // left behind by an earlier failed import
     }
     let mut copier = Copier {
+        target,
         config_dir: fs::canonicalize(target).unwrap_or_else(|_| target.clone()),
         into: &into,
         staging: &staging,
@@ -127,6 +134,8 @@ pub fn import(config: &Config, name: &str) -> Result<bool> {
 }
 
 struct Copier<'a> {
+    /// The config dir as profiles.json spells it, which every copied path starts with.
+    target: &'a Path,
     config_dir: PathBuf,
     into: &'a Path,
     staging: &'a Path,
@@ -162,6 +171,11 @@ impl Copier<'_> {
             return Ok(());
         }
         if meta.is_dir() {
+            if let Some(why) = self.not_yours(from) {
+                self.notes
+                    .push(format!("left in place: {} ({why})", from.display()));
+                return Ok(());
+            }
             for entry in fs::read_dir(from)? {
                 let entry = entry?;
                 self.copy(&entry.path(), &to.join(entry.file_name()))?;
@@ -171,6 +185,18 @@ impl Copier<'_> {
         create_parent(to)?;
         fs::copy(from, to).with_context(|| format!("{} can't be read", from.display()))?;
         Ok(())
+    }
+
+    fn not_yours(&self, dir: &Path) -> Option<&'static str> {
+        let rel = dir.strip_prefix(self.target).ok()?;
+        if CLAUDE_MANAGED.iter().any(|m| rel == Path::new(m)) {
+            return Some("Claude Code fills it in for this account");
+        }
+        let name = dir.file_name()?;
+        REBUILT
+            .iter()
+            .any(|r| name == *r)
+            .then_some("rebuilt on each machine")
     }
 
     fn copy_link(&mut self, from: &Path, to: &Path) -> Result<()> {

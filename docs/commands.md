@@ -51,7 +51,8 @@ instead of overwriting anything it didn't create. See [Sharing files between acc
 
 Copies `CLAUDE.md`, `settings.json`, `keybindings.json`, `agents/`, `commands/`, `hooks/`,
 `output-styles/` and `skills/` from the profile's config directory into `profiles/<profile>/`, then
-syncs that profile. Nothing is deleted; links to folders are left in place. See
+syncs that profile. Nothing is deleted. Links to folders, git repos, `skills/synced/`,
+`skills/.trash/` and `.venv`, `node_modules` and `__pycache__` folders are left in place. See
 [Moving an existing setup](migrating.md).
 
 ## `swipe init <shell>`

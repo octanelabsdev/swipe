@@ -1411,6 +1411,60 @@ fn import_leaves_git_repos_in_place() {
     assert_eq!(s.read(".claude-work/skills/other.md"), "other");
 }
 
+#[test]
+fn import_leaves_folders_claude_code_fills_in_alone() {
+    let s = Sandbox::new();
+    let work = work_dir(&s);
+    let left = [
+        "skills/synced/bucket/review/SKILL.md",
+        "skills/.trash/123-abc/old/SKILL.md",
+        "skills/tool/.venv/pyvenv.cfg",
+        "skills/tool/node_modules/dep/index.js",
+        "skills/tool/__pycache__/run.cpython-313.pyc",
+    ];
+    for file in left {
+        fs::create_dir_all(work.join(file).parent().unwrap()).unwrap();
+        fs::write(work.join(file), "theirs").unwrap();
+    }
+    fs::create_dir_all(work.join("skills/tool")).unwrap();
+    fs::write(work.join("skills/tool/run.py"), "mine").unwrap();
+    fs::create_dir_all(work.join("commands/synced")).unwrap();
+    fs::write(work.join("commands/synced/a.md"), "mine").unwrap();
+
+    let out = s.run(&["import", "work"]);
+    assert_ok(&out);
+    assert!(
+        stdout(&out).contains("Claude Code fills it in for this account"),
+        "{}",
+        stdout(&out)
+    );
+    assert!(
+        stdout(&out).contains("rebuilt on each machine"),
+        "{}",
+        stdout(&out)
+    );
+    for file in left {
+        assert!(
+            fs::symlink_metadata(work.join(file)).unwrap().is_file(),
+            "{file} must stay a real file"
+        );
+        assert!(!s.src.join("profiles/work").join(file).exists(), "{file}");
+    }
+    for file in ["skills/tool/run.py", "commands/synced/a.md"] {
+        assert!(
+            fs::symlink_metadata(work.join(file)).unwrap().is_symlink(),
+            "{file} must be imported"
+        );
+    }
+
+    fs::write(work.join("skills/synced/bucket/review/SKILL.md"), "updated").unwrap();
+    assert_ok(&s.sync());
+    assert_eq!(
+        s.read(".claude-work/skills/synced/bucket/review/SKILL.md"),
+        "updated"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn import_refuses_a_symlinked_settings_file() {
