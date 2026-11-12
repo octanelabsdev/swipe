@@ -612,7 +612,10 @@ mod tests {
         let mut s = Setup::new(Some(FILE));
         s.key('a');
         s.answer("client");
-        assert_shows(&s.screen(), "Config dir: ~/.claude-client");
+        assert_shows(
+            &s.screen(),
+            &format!("Config dir: ~{MAIN_SEPARATOR}.claude-client"),
+        );
         s.answer("~/.claude-client");
         s.key('p');
         assert_shows(&s.screen(), "Add path: ~/code/client");
