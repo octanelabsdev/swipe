@@ -48,7 +48,14 @@ fn run_command(args: Vec<OsString>) -> Result<ExitCode> {
             };
             let config = Config::load()?;
             let profile = config.profile_for(&dir)?;
-            println!("{}\t{}", profile.name, profile.config_dir.display());
+            match &profile.op_account {
+                Some(account) => println!(
+                    "{}\t{}\t{account}",
+                    profile.name,
+                    profile.config_dir.display()
+                ),
+                None => println!("{}\t{}", profile.name, profile.config_dir.display()),
+            }
             Ok(ExitCode::SUCCESS)
         }
         Some("sync") => {
@@ -113,6 +120,10 @@ fn run_claude(args: &[OsString]) -> Result<ExitCode> {
         command.env_remove("CLAUDE_CONFIG_DIR");
     } else {
         command.env("CLAUDE_CONFIG_DIR", &profile.config_dir);
+    }
+    // Without one, an OP_ACCOUNT the user exported still reaches claude.
+    if let Some(account) = &profile.op_account {
+        command.env("OP_ACCOUNT", account);
     }
     launch(command)
 }

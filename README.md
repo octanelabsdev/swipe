@@ -58,6 +58,10 @@ They don't need admin rights. If you have Rust, you can use
 Now `claude` in `~/code/acme` uses your work account, and `claude` anywhere else uses your
 personal one. The first time you use a new config directory, Claude Code asks you to log in.
 
+Use more than one 1Password account? Add `"op_account"` to a profile, and the `op` CLI defaults to
+that account inside its Claude sessions. See the
+[configuration reference](https://swipe.octanelabs.dev/configuration/#op_account).
+
 ## Commands
 
 | Command | What it does |

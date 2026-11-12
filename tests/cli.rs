@@ -336,14 +336,14 @@ fn with_fake_claude(s: &Sandbox, cmd: &mut Command) {
     if cfg!(windows) {
         fs::write(
             bin.join("claude.cmd"),
-            "@if defined CLAUDE_CONFIG_DIR (echo CLAUDE_CONFIG_DIR=%CLAUDE_CONFIG_DIR% args=%*) else (echo CLAUDE_CONFIG_DIR=^<unset^> args=%*)\r\n",
+            "@if defined CLAUDE_CONFIG_DIR (echo CLAUDE_CONFIG_DIR=%CLAUDE_CONFIG_DIR% args=%*) else (echo CLAUDE_CONFIG_DIR=^<unset^> args=%*)\r\n@if defined OP_ACCOUNT echo OP_ACCOUNT=%OP_ACCOUNT%\r\n",
         )
         .unwrap();
     } else {
         let script = bin.join("claude");
         fs::write(
             &script,
-            "#!/bin/sh\necho \"CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR-<unset>} args=$*\"\n",
+            "#!/bin/sh\necho \"CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR-<unset>} args=$*\"\n[ -n \"${OP_ACCOUNT+set}\" ] && echo \"OP_ACCOUNT=$OP_ACCOUNT\"\nexit 0\n",
         )
         .unwrap();
         #[cfg(unix)]
@@ -360,7 +360,102 @@ fn with_fake_claude(s: &Sandbox, cmd: &mut Command) {
             .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
     )
     .unwrap();
-    cmd.env("PATH", path).env("CLAUDE_CONFIG_DIR", "/stale");
+    cmd.env("PATH", path)
+        .env("CLAUDE_CONFIG_DIR", "/stale")
+        .env_remove("OP_ACCOUNT");
+}
+
+fn op_account_seen_by_claude(cmd: &mut Command) -> Option<String> {
+    let out = cmd.output().unwrap();
+    assert_ok(&out);
+    stdout(&out)
+        .lines()
+        .find_map(|l| l.strip_prefix("OP_ACCOUNT="))
+        .map(String::from)
+}
+
+const OP_CONFIG: &str = r#"{
+  "default": "personal",
+  "profiles": {
+    "personal": { "config_dir": "~/.claude" },
+    "work": { "config_dir": "~/.claude-work", "paths": ["~/IOU"], "op_account": "example" }
+  }
+}"#;
+
+#[test]
+fn run_gives_claude_the_profiles_1password_account() {
+    let s = Sandbox::new();
+    s.config(OP_CONFIG);
+    let mut cmd = s.swipe(&["run"]);
+    cmd.current_dir(s.home.join("IOU/app"));
+    with_fake_claude(&s, &mut cmd);
+    assert_eq!(
+        op_account_seen_by_claude(&mut cmd).as_deref(),
+        Some("example")
+    );
+}
+
+#[test]
+fn run_prefers_the_profiles_1password_account_over_the_shells() {
+    let s = Sandbox::new();
+    s.config(OP_CONFIG);
+    let mut cmd = s.swipe(&["run"]);
+    cmd.current_dir(s.home.join("IOU/app"));
+    with_fake_claude(&s, &mut cmd);
+    cmd.env("OP_ACCOUNT", "other");
+    assert_eq!(
+        op_account_seen_by_claude(&mut cmd).as_deref(),
+        Some("example")
+    );
+}
+
+#[test]
+fn run_leaves_the_shells_1password_account_alone_when_the_profile_has_none() {
+    let s = Sandbox::new();
+    s.config(OP_CONFIG);
+    let mut cmd = s.swipe(&["run"]);
+    cmd.current_dir(s.home.join("elsewhere"));
+    with_fake_claude(&s, &mut cmd);
+    cmd.env("OP_ACCOUNT", "inherited");
+    assert_eq!(
+        op_account_seen_by_claude(&mut cmd).as_deref(),
+        Some("inherited")
+    );
+
+    let mut cmd = s.swipe(&["run"]);
+    cmd.current_dir(s.home.join("elsewhere"));
+    with_fake_claude(&s, &mut cmd);
+    assert_eq!(op_account_seen_by_claude(&mut cmd), None);
+}
+
+#[test]
+fn which_shows_the_1password_account_only_when_set() {
+    let s = Sandbox::new();
+    s.config(OP_CONFIG);
+    assert_eq!(
+        s.which(&s.home.join("IOU/app")),
+        format!("work\t{}\texample\n", s.home.join(".claude-work").display())
+    );
+    assert_eq!(
+        s.which(&s.home.join("elsewhere")),
+        s.expect("personal", ".claude")
+    );
+}
+
+#[test]
+fn rejects_an_empty_1password_account() {
+    assert_config_rejected(
+        r#"{"profiles": {"w": {"config_dir": "~/.w", "op_account": ""}}}"#,
+        "profile \"w\": op_account must not be empty",
+    );
+}
+
+#[test]
+fn rejects_a_misspelled_1password_account_key() {
+    assert_config_rejected(
+        r#"{"profiles": {"w": {"config_dir": "~/.w", "op_acount": "example"}}}"#,
+        "unknown field `op_acount`",
+    );
 }
 
 #[test]

@@ -31,7 +31,8 @@ $ swipe which ~/code/acme/api
 work	/Users/you/.claude-work
 ```
 
-Prints the profile name and config directory, separated by a tab. Useful in scripts:
+Prints the profile name and config directory, separated by a tab. If the profile sets
+[`op_account`](configuration.md#op_account), it follows as a third field. Useful in scripts:
 
 ```sh
 CLAUDE_CONFIG_DIR=$(swipe which | cut -f2)

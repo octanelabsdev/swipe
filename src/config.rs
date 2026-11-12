@@ -17,6 +17,7 @@ struct RawProfile {
     config_dir: String,
     #[serde(default)]
     paths: Vec<String>,
+    op_account: Option<String>,
 }
 
 pub struct Profile {
@@ -25,6 +26,8 @@ pub struct Profile {
     /// because Claude Code keys its macOS login to this exact value.
     pub config_dir: PathBuf,
     paths: Vec<PathBuf>,
+    /// The 1Password account `op` should default to, passed through untouched as OP_ACCOUNT.
+    pub op_account: Option<String>,
 }
 
 pub struct Config {
@@ -88,10 +91,14 @@ impl Config {
                     );
                 }
             }
+            if p.op_account.as_deref() == Some("") {
+                bail!("profile \"{name}\": op_account must not be empty");
+            }
             profiles.push(Profile {
                 name,
                 config_dir,
                 paths,
+                op_account: p.op_account,
             });
         }
         if let Some(default) = &raw.default
