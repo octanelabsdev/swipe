@@ -10,6 +10,8 @@
 Set `SWIPE_HOME` to use a different folder, for example a dotfiles repo. If `SWIPE_HOME` isn't set
 and `XDG_CONFIG_HOME` is, `swipe` uses `$XDG_CONFIG_HOME/swipe`.
 
+You can edit the file by hand, or with [`swipe edit`](commands.md#swipe-edit).
+
 ## Example
 
 ```json

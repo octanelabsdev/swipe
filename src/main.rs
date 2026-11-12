@@ -1,5 +1,7 @@
 mod config;
+mod edit;
 mod import;
+mod profiles_file;
 mod sync;
 
 use anyhow::{Context, Result, bail};
@@ -13,6 +15,7 @@ use std::{env, io};
 const USAGE: &str = "\
 usage: swipe run [args...]        run claude with the profile for the current directory
        swipe which [dir]          print the profile and config dir for dir (default: current dir)
+       swipe edit                 add, change and remove profiles in a full-screen editor
        swipe sync                 link shared and per-profile files into each config dir
        swipe import <profile>     copy a profile's existing commands, hooks and settings
                                   into the source tree, then sync them back
@@ -57,6 +60,16 @@ fn run_command(args: Vec<OsString>) -> Result<ExitCode> {
                 None => println!("{}\t{}", profile.name, profile.config_dir.display()),
             }
             Ok(ExitCode::SUCCESS)
+        }
+        Some("edit") => {
+            if !rest.is_empty() {
+                return usage_error();
+            }
+            Ok(if edit::run()? {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            })
         }
         Some("sync") => {
             if !rest.is_empty() {

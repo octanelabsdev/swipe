@@ -9,8 +9,8 @@ curl -fsSL https://raw.githubusercontent.com/octanelabsdev/swipe/main/install.sh
 echo 'eval "$(swipe init zsh)"' >> ~/.zshrc
 ```
 
-Then tell it which folders belong to which account in
-`~/.config/swipe/profiles.json`:
+Then tell it which folders belong to which account. Run `swipe edit`, or write
+`~/.config/swipe/profiles.json` yourself:
 
 ```json
 {
