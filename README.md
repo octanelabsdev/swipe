@@ -37,7 +37,8 @@ They don't need admin rights. If you have Rust, you can use
    Add-Content $PROFILE 'swipe init powershell | Out-String | Invoke-Expression'
    ```
 
-2. Tell swipe which folders belong to which account, in `~/.config/swipe/profiles.json`:
+2. Tell swipe which folders belong to which account. Run `swipe edit` and press `a` to add a
+   profile, or write `~/.config/swipe/profiles.json` yourself:
 
    ```json
    {
@@ -68,6 +69,7 @@ that account inside its Claude sessions. See the
 |---|---|
 | `swipe run [args...]` | Runs `claude` with the profile for the current directory. The hook calls this for you. |
 | `swipe which [dir]` | Prints the profile and config directory for a directory. |
+| `swipe edit` | Opens a full-screen editor to add, change and remove profiles. |
 | `swipe sync` | Links your shared and per-profile files into each config directory. |
 | `swipe import <profile>` | Copies an existing profile's commands, hooks and settings into the source tree, then syncs. |
 | `swipe init <shell>` | Prints the hook for bash, zsh or PowerShell. |

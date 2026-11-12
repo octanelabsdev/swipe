@@ -75,9 +75,19 @@ shadow the hook.
     Git Bash uses the bash hook. cmd.exe has no shell functions, so it isn't supported; use
     PowerShell or Windows Terminal instead.
 
-## 3. Write `profiles.json`
+## 3. Set up your profiles
 
-`swipe` reads `~/.config/swipe/profiles.json`. Create it:
+Run the editor:
+
+```sh
+swipe edit
+```
+
+Press `a` to add a profile. Give it a name and a config directory, then press `p` to add the
+folders that use it. Press `w` to save and `q` to quit. See [`swipe edit`](commands.md#swipe-edit)
+for every key.
+
+Or write `~/.config/swipe/profiles.json` yourself:
 
 ```json
 {

@@ -521,6 +521,26 @@ fn run_treats_forward_slashes_as_the_default_dir_on_windows() {
     assert_eq!(stdout(&out).trim(), "CLAUDE_CONFIG_DIR=<unset> args=");
 }
 
+// --- edit ------------------------------------------------------------------
+
+#[test]
+fn edit_refuses_to_start_without_a_terminal_and_changes_nothing() {
+    let s = Sandbox::new();
+    let out = s.run(&["edit"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert_fails(&out, "swipe edit needs a terminal");
+    assert_eq!(
+        fs::read_to_string(s.src.join("profiles.json")).unwrap(),
+        CONFIG
+    );
+}
+
+#[test]
+fn edit_takes_no_arguments() {
+    let s = Sandbox::new();
+    assert_eq!(s.run(&["edit", "work"]).status.code(), Some(2));
+}
+
 #[test]
 fn init_rejects_an_unknown_shell() {
     let s = Sandbox::new();

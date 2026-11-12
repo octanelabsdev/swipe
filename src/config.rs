@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::{env, fs};
@@ -40,15 +41,11 @@ pub struct Config {
 
 impl Config {
     pub fn load() -> Result<Config> {
-        let user_home = env::home_dir().context("could not determine your home directory")?;
-        let home = match env::var_os("SWIPE_HOME") {
-            Some(dir) => PathBuf::from(dir),
-            None => env::var_os("XDG_CONFIG_HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| user_home.join(".config"))
-                .join("swipe"),
-        };
-        let home = std::path::absolute(home)?;
+        let (home, user_home) = locate()?;
+        Config::load_from(home, user_home)
+    }
+
+    pub fn load_from(home: PathBuf, user_home: PathBuf) -> Result<Config> {
         let file = home.join("profiles.json");
         let text = fs::read_to_string(&file)
             .with_context(|| format!("could not read {}", file.display()))?;
@@ -56,6 +53,12 @@ impl Config {
             serde_json::from_str(&text).with_context(|| format!("invalid {}", file.display()))?;
         Config::from_raw(raw, home, user_home)
             .with_context(|| format!("invalid {}", file.display()))
+    }
+
+    /// Runs every check `load` makes, on a profiles.json that hasn't been written yet.
+    pub fn check(value: &Value, home: &Path, user_home: &Path) -> Result<()> {
+        let raw: RawConfig = serde_json::from_value(value.clone())?;
+        Config::from_raw(raw, home.to_path_buf(), user_home.to_path_buf()).map(|_| ())
     }
 
     fn from_raw(raw: RawConfig, home: PathBuf, user_home: PathBuf) -> Result<Config> {
@@ -166,7 +169,20 @@ impl Config {
     }
 }
 
-fn expand(path: &str, user_home: &Path) -> Result<PathBuf> {
+/// The source tree (where `profiles.json` lives) and the user's home directory.
+pub fn locate() -> Result<(PathBuf, PathBuf)> {
+    let user_home = env::home_dir().context("could not determine your home directory")?;
+    let home = match env::var_os("SWIPE_HOME") {
+        Some(dir) => PathBuf::from(dir),
+        None => env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| user_home.join(".config"))
+            .join("swipe"),
+    };
+    Ok((std::path::absolute(home)?, user_home))
+}
+
+pub fn expand(path: &str, user_home: &Path) -> Result<PathBuf> {
     let expanded = if path == "~" {
         user_home.to_path_buf()
     } else if let Some(rest) = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")) {
