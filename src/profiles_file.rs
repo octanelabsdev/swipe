@@ -125,7 +125,7 @@ impl ProfilesFile {
         let folder = self.source_folder(new);
         if new != on_disk && fs::symlink_metadata(&folder).is_ok() {
             bail!(
-                "{} already exists; move it away before renaming",
+                "profiles/{new} already exists; move it away before renaming ({})",
                 folder.display()
             );
         }
@@ -259,7 +259,11 @@ impl ProfilesFile {
             .collect();
         for (_, to) in &moves {
             if fs::symlink_metadata(to).is_ok() {
-                bail!("not saved: {} already exists", to.display());
+                let name = to.file_name().unwrap_or_default().to_string_lossy();
+                bail!(
+                    "not saved: profiles/{name} already exists ({})",
+                    to.display()
+                );
             }
         }
         let mut done: Vec<&(PathBuf, PathBuf)> = Vec::new();

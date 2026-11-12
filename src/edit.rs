@@ -9,7 +9,7 @@ use ratatui::crossterm::event::{self, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Position};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{DefaultTerminal, Frame};
 use std::io::{self, IsTerminal};
 use std::path::{MAIN_SEPARATOR, Path};
@@ -394,7 +394,8 @@ impl Editor {
         } else {
             ""
         };
-        let title = format!(" swipe profiles: {}{unsaved} ", self.file.path().display());
+        // The marker goes before the path, so a long path is what gets cut off.
+        let title = format!(" swipe profiles{unsaved}: {} ", self.file.path().display());
         let list = if empty {
             List::new([ListItem::new("No profiles yet. Press a to add one.")])
         } else {
@@ -441,7 +442,10 @@ impl Editor {
             }
             (None, None) => Line::raw(""),
         };
-        frame.render_widget(Paragraph::new(status), status_area);
+        frame.render_widget(
+            Paragraph::new(status).wrap(Wrap { trim: false }),
+            status_area,
+        );
 
         let help: Vec<Line> = match &self.mode {
             Mode::Browse => vec![
@@ -615,7 +619,7 @@ mod tests {
         s.answer("~/code/client");
         s.key('o');
         s.answer("client.1password.com");
-        assert_shows(&s.screen(), "profiles.json (unsaved)");
+        assert_shows(&s.screen(), "swipe profiles (unsaved): ");
         assert_eq!(s.text(), FILE, "nothing is written before saving");
 
         s.key('w');
