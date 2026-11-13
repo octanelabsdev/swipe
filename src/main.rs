@@ -14,7 +14,8 @@ use std::{env, io};
 
 const USAGE: &str = "\
 usage: swipe run [args...]        run claude with the profile for the current directory
-       swipe which [dir]          print the profile and config dir for dir (default: current dir)
+       swipe which [dir]          print the profile, config dir, 1Password account and login
+                                  email for dir (default: current dir)
        swipe edit                 add, change and remove profiles in a full-screen editor
        swipe sync                 link shared and per-profile files into each config dir
        swipe import <profile>     copy a profile's existing commands, hooks and settings
@@ -51,14 +52,17 @@ fn run_command(args: Vec<OsString>) -> Result<ExitCode> {
             };
             let config = Config::load()?;
             let profile = config.profile_for(&dir)?;
-            match &profile.op_account {
-                Some(account) => println!(
-                    "{}\t{}\t{account}",
-                    profile.name,
-                    profile.config_dir.display()
-                ),
-                None => println!("{}\t{}", profile.name, profile.config_dir.display()),
+            let mut fields = vec![
+                profile.name.clone(),
+                profile.config_dir.display().to_string(),
+                profile.op_account.clone().unwrap_or_default(),
+                config.login_email(profile).unwrap_or_default(),
+            ];
+            // Fields keep their positions for `cut`; only empty ones at the end are dropped.
+            while fields.last().is_some_and(String::is_empty) {
+                fields.pop();
             }
+            println!("{}", fields.join("\t"));
             Ok(ExitCode::SUCCESS)
         }
         Some("edit") => {

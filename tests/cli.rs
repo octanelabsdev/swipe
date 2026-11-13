@@ -382,6 +382,57 @@ const OP_CONFIG: &str = r#"{
   }
 }"#;
 
+fn log_in(file: &Path, email: &str) {
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    let json = format!(r#"{{"numStartups": 3, "oauthAccount": {{"emailAddress": "{email}"}}}}"#);
+    fs::write(file, json).unwrap();
+}
+
+#[test]
+fn which_shows_the_email_each_profile_is_logged_in_with() {
+    let s = Sandbox::new();
+    s.config(OP_CONFIG);
+    log_in(&s.home.join(".claude.json"), "me@example.com");
+    log_in(&s.home.join(".claude-work/.claude.json"), "me@acme.com");
+    assert_eq!(
+        s.which(&s.home.join("IOU/app")),
+        format!(
+            "work\t{}\texample\tme@acme.com\n",
+            s.home.join(".claude-work").display()
+        )
+    );
+    assert_eq!(
+        s.which(&s.home.join("elsewhere")),
+        format!(
+            "personal\t{}\t\tme@example.com\n",
+            s.home.join(".claude").display()
+        ),
+        "the default ~/.claude keeps its login in ~/.claude.json; an empty field holds the place of the 1Password account"
+    );
+    let cut = s.which(&s.home.join("elsewhere"));
+    assert_eq!(
+        cut.split('\t').nth(1),
+        Some(s.home.join(".claude").to_str().unwrap())
+    );
+}
+
+#[test]
+fn which_leaves_the_email_out_when_the_login_file_is_missing_or_unreadable() {
+    let s = Sandbox::new();
+    s.config(OP_CONFIG);
+    fs::create_dir_all(s.home.join(".claude-work")).unwrap();
+    fs::write(s.home.join(".claude-work/.claude.json"), "not json").unwrap();
+    fs::write(s.home.join(".claude.json"), r#"{"numStartups": 1}"#).unwrap();
+    assert_eq!(
+        s.which(&s.home.join("IOU/app")),
+        format!("work\t{}\texample\n", s.home.join(".claude-work").display())
+    );
+    assert_eq!(
+        s.which(&s.home.join("elsewhere")),
+        s.expect("personal", ".claude")
+    );
+}
+
 #[test]
 fn run_gives_claude_the_profiles_1password_account() {
     let s = Sandbox::new();
