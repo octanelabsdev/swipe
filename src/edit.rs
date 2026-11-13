@@ -11,8 +11,9 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{DefaultTerminal, Frame};
+use std::collections::HashMap;
 use std::io::{self, IsTerminal};
-use std::path::{MAIN_SEPARATOR, Path};
+use std::path::{MAIN_SEPARATOR, Path, PathBuf};
 
 /// Returns false if a sync run afterwards had problems.
 pub fn run() -> Result<bool> {
@@ -21,7 +22,8 @@ pub fn run() -> Result<bool> {
     }
     let (home, user_home) = config::locate()?;
     let here = tilde(&std::env::current_dir()?, &user_home);
-    let mut editor = Editor::new(ProfilesFile::open_in(home, user_home)?, here);
+    let file = ProfilesFile::open_in(home, user_home.clone())?;
+    let mut editor = Editor::new(file, here, user_home);
 
     let mut terminal = ratatui::try_init()?;
     let result = editor.event_loop(&mut terminal);
@@ -91,11 +93,14 @@ struct Editor {
     /// Printed after the editor closes.
     notes: Vec<String>,
     run_sync: bool,
+    user_home: PathBuf,
+    /// Login email per config dir as written; read once, since `.claude.json` can be large.
+    logins: HashMap<String, Option<String>>,
 }
 
 impl Editor {
-    fn new(file: ProfilesFile, here: String) -> Editor {
-        Editor {
+    fn new(file: ProfilesFile, here: String, user_home: PathBuf) -> Editor {
+        let mut editor = Editor {
             file,
             here,
             selected: 0,
@@ -105,6 +110,21 @@ impl Editor {
             status: None,
             notes: Vec::new(),
             run_sync: false,
+            user_home,
+            logins: HashMap::new(),
+        };
+        editor.read_logins();
+        editor
+    }
+
+    fn read_logins(&mut self) {
+        for entry in self.file.entries() {
+            if !self.logins.contains_key(&entry.config_dir) {
+                let login = config::expand(&entry.config_dir, &self.user_home)
+                    .ok()
+                    .and_then(|dir| config::login_email(&dir, &self.user_home));
+                self.logins.insert(entry.config_dir, login);
+            }
         }
     }
 
@@ -282,6 +302,7 @@ impl Editor {
                 self.report(result, format!("Set the 1Password account for \"{name}\"."));
             }
         }
+        self.read_logins();
     }
 
     fn save(&mut self, then_quit: bool) {
@@ -369,12 +390,22 @@ impl Editor {
         .areas(frame.area());
 
         let width = entries.iter().map(|e| e.name.len()).max().unwrap_or(0);
+        let dir_width = entries
+            .iter()
+            .map(|e| e.config_dir.chars().count())
+            .max()
+            .unwrap_or(0);
         let items: Vec<ListItem> = entries
             .iter()
             .map(|e| {
+                let login = match self.logins.get(&e.config_dir) {
+                    Some(Some(email)) => Span::raw(format!("  {email}")),
+                    _ => Span::styled("  not logged in", Style::new().fg(Color::DarkGray)),
+                };
                 let mut spans = vec![
                     Span::styled(format!("{:width$}", e.name), Style::new().bold()),
-                    Span::raw(format!("  {}", e.config_dir)),
+                    Span::raw(format!("  {:dir_width$}", e.config_dir)),
+                    login,
                 ];
                 if let Some(account) = &e.op_account {
                     spans.push(Span::styled(
@@ -525,16 +556,18 @@ mod tests {
             let user_home = dir.path().join("user");
             fs::create_dir_all(user_home.join("code/acme")).unwrap();
             fs::create_dir_all(user_home.join("code/client")).unwrap();
+            write_login(&user_home.join(".claude.json"), "me@example.com");
             if let Some(contents) = contents {
                 fs::create_dir_all(&home).unwrap();
                 fs::write(home.join("profiles.json"), contents).unwrap();
             }
             let file = ProfilesFile::open_in(home.clone(), user_home.clone()).unwrap();
+            let editor = Editor::new(file, "~/code/client".into(), user_home.clone());
             Setup {
                 _dir: dir,
                 home,
                 user_home,
-                editor: Editor::new(file, "~/code/client".into()),
+                editor,
             }
         }
 
@@ -590,6 +623,12 @@ mod tests {
         }
     }
 
+    fn write_login(file: &Path, email: &str) {
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        let json = format!(r#"{{"oauthAccount": {{"emailAddress": "{email}"}}}}"#);
+        fs::write(file, json).unwrap();
+    }
+
     fn assert_shows(screen: &str, text: &str) {
         assert!(
             screen.contains(text),
@@ -598,13 +637,34 @@ mod tests {
     }
 
     #[test]
-    fn the_editor_lists_profiles_with_their_dirs_accounts_and_the_default() {
+    fn the_editor_lists_profiles_with_their_dirs_logins_accounts_and_the_default() {
         let s = Setup::new(Some(FILE));
         let screen = s.screen();
-        assert_shows(&screen, "personal  ~/.claude");
-        assert_shows(&screen, "(default)");
-        assert_shows(&screen, "work      ~/.claude-work  1Password: acme");
+        assert_shows(
+            &screen,
+            "personal  ~/.claude       me@example.com  (default)",
+        );
+        assert_shows(
+            &screen,
+            "work      ~/.claude-work  not logged in  1Password: acme",
+        );
         assert_shows(&screen, "[a]dd");
+    }
+
+    #[test]
+    fn adding_a_profile_for_a_logged_in_config_dir_shows_its_email() {
+        let mut s = Setup::new(Some(FILE));
+        write_login(
+            &s.user_home.join(".claude-client/.claude.json"),
+            "client@example.com",
+        );
+        s.key('a');
+        s.answer("client");
+        s.answer("~/.claude-client");
+        assert_shows(
+            &s.screen(),
+            "client    ~/.claude-client  client@example.com",
+        );
     }
 
     #[test]

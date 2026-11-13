@@ -68,7 +68,7 @@ that account inside its Claude sessions. See the
 | Command | What it does |
 |---|---|
 | `swipe run [args...]` | Runs `claude` with the profile for the current directory. The hook calls this for you. |
-| `swipe which [dir]` | Prints the profile and config directory for a directory. |
+| `swipe which [dir]` | Prints the profile, config directory and login email for a directory. |
 | `swipe edit` | Opens a full-screen editor to add, change and remove profiles. |
 | `swipe sync` | Links your shared and per-profile files into each config directory. |
 | `swipe import <profile>` | Copies an existing profile's commands, hooks and settings into the source tree, then syncs. |

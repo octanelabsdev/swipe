@@ -165,8 +165,29 @@ impl Config {
     /// Claude Code's own default. Running with this dir means leaving CLAUDE_CONFIG_DIR unset,
     /// because setting it explicitly would point at a different (logged-out) account.
     pub fn is_default_dir(&self, dir: &Path) -> bool {
-        same_path(dir, &self.user_home.join(".claude"))
+        is_default_dir(dir, &self.user_home)
     }
+
+    pub fn login_email(&self, profile: &Profile) -> Option<String> {
+        login_email(&profile.config_dir, &self.user_home)
+    }
+}
+
+fn is_default_dir(dir: &Path, user_home: &Path) -> bool {
+    same_path(dir, &user_home.join(".claude"))
+}
+
+/// Claude Code's `.claude.json` sits in the home dir, not in it, for the default `~/.claude`.
+pub fn login_email(config_dir: &Path, user_home: &Path) -> Option<String> {
+    let file = if is_default_dir(config_dir, user_home) {
+        user_home.join(".claude.json")
+    } else {
+        config_dir.join(".claude.json")
+    };
+    let value: Value = serde_json::from_str(&fs::read_to_string(file).ok()?).ok()?;
+    value["oauthAccount"]["emailAddress"]
+        .as_str()
+        .map(String::from)
 }
 
 /// The source tree (where `profiles.json` lives) and the user's home directory.

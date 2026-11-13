@@ -3,7 +3,7 @@
 | Command | What it does |
 |---|---|
 | `swipe run [args…]` | Starts `claude` with the profile for the current directory, passing `args` through |
-| `swipe which [dir]` | Prints the profile and config directory for `dir` (default: the current directory) |
+| `swipe which [dir]` | Prints the profile, config directory, 1Password account and login email for `dir` (default: the current directory) |
 | `swipe edit` | Opens a full-screen editor for your profiles |
 | `swipe sync` | Builds every profile's config directory from the source tree |
 | `swipe import <profile>` | Copies a profile's existing files into the source tree, then syncs them back |
@@ -29,11 +29,14 @@ profile can't be resolved, `claude` isn't started.
 
 ```sh
 $ swipe which ~/code/acme/api
-work	/Users/you/.claude-work
+work	/Users/you/.claude-work	acme.1password.com	you@acme.com
 ```
 
-Prints the profile name and config directory, separated by a tab. If the profile sets
-[`op_account`](configuration.md#op_account), it follows as a third field. Useful in scripts:
+Prints tab-separated fields: the profile name, the config directory, the
+[`op_account`](configuration.md#op_account), and the email Claude Code is logged in with for that
+config directory. A field that's unset is left empty, so each field keeps its position, and empty
+fields at the end are left out. swipe reads the email from Claude Code's `.claude.json` (for
+`~/.claude`, that's `~/.claude.json`) and never changes that file. Useful in scripts:
 
 ```sh
 CLAUDE_CONFIG_DIR=$(swipe which | cut -f2)
@@ -50,7 +53,8 @@ swipe edit
 ```
 
 Opens a full-screen editor for [`profiles.json`](configuration.md). It lists every profile with its
-config directory, 1Password account and paths, and marks the default.
+config directory, login email, 1Password account and paths, and marks the default. A profile
+whose config directory has no login shows `not logged in`.
 
 | Key | Action |
 |---|---|
